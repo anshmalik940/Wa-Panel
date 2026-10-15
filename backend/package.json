@@ -12,6 +12,7 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/scripts/seed.js",
     "seed:demo": "node src/scripts/seed.js --demo",
+    "admin:reset-credentials": "node scripts/reset-admin-credentials.js",
     "lint": "eslint src tests",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\""
   },

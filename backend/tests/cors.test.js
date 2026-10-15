@@ -1,5 +1,5 @@
 process.env.NODE_ENV = 'test';
-process.env.CLIENT_URL = 'https://wa-panel-five.vercel.app,http://localhost:5173';
+process.env.CLIENT_URL = 'http://localhost:5173, https://partner.example';
 process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/wa_panel_cors_test';
 process.env.JWT_SECRET = 'test-jwt-secret-that-is-long-enough';
 process.env.ENCRYPTION_KEY = 'test-encryption-key-that-is-long-enough';
@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { createApp } = require('../src/app');
 
-test('CORS permits the production frontend preflight and rejects unlisted origins', async () => {
+test('CORS permits the production frontend and local preflights but rejects unlisted origins', async () => {
   const app = createApp();
   const allowed = await request(app)
     .options('/api/auth/login')
@@ -31,6 +31,13 @@ test('CORS permits the production frontend preflight and rejects unlisted origin
     .set('Access-Control-Request-Method', 'POST');
 
   assert.equal(local.headers['access-control-allow-origin'], 'http://localhost:5173');
+
+  const configured = await request(app)
+    .options('/api/auth/login')
+    .set('Origin', 'https://partner.example')
+    .set('Access-Control-Request-Method', 'POST');
+
+  assert.equal(configured.headers['access-control-allow-origin'], 'https://partner.example');
 
   const rejected = await request(app)
     .options('/api/auth/login')

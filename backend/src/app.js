@@ -13,9 +13,12 @@ function createApp() {
   app.set('trust proxy', config.TRUST_PROXY);
   app.disable('x-powered-by');
   app.use(helmet());
-  const origins = config.CLIENT_URL.split(',').map((s) => s.trim()).filter(Boolean);
+  const origins = [...new Set([
+    ...config.CLIENT_URL.split(',').map((s) => s.trim()).filter(Boolean),
+    'https://wa-panel-five.vercel.app',
+  ])];
   app.use(cors({
-    origin: origins,
+    origin: (origin, callback) => callback(null, !origin || origins.includes(origin)),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     exposedHeaders: ['Content-Disposition'],
