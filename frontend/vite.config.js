@@ -8,7 +8,7 @@ export default defineConfig(({ command, mode }) => {
 
   if (command === 'build' && mode === 'production') {
     if (!apiUrl) {
-      throw new Error('VITE_API_URL is required for production builds. Set it to the Render backend origin (for example, https://your-service.onrender.com).');
+      throw new Error('VITE_API_URL is required for production builds. Set it to https://wa-panel-1.onrender.com or your deployed Render backend origin.');
     }
     let parsedApiUrl;
     try {
@@ -16,11 +16,11 @@ export default defineConfig(({ command, mode }) => {
     } catch {
       throw new Error('VITE_API_URL must be a valid HTTPS backend origin without an /api path.');
     }
-    if (parsedApiUrl.hostname === 'your-backend-service.onrender.com') {
-      throw new Error('VITE_API_URL still uses the example Render hostname. Set it to the deployed backend origin before building.');
-    }
     if (parsedApiUrl.protocol !== 'https:' || !['', '/'].includes(parsedApiUrl.pathname) || parsedApiUrl.search || parsedApiUrl.hash) {
       throw new Error('VITE_API_URL must be an HTTPS backend origin without a path, query, or fragment.');
+    }
+    if (parsedApiUrl.hostname === 'your-backend-service.onrender.com') {
+      throw new Error('VITE_API_URL still uses the example hostname. Set it to https://wa-panel-1.onrender.com in Vercel before building.');
     }
   }
 

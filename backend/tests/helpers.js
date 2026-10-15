@@ -2,13 +2,14 @@ const crypto = require('crypto');
 
 const BASE = process.env.TEST_MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const DB = `wa_test_${crypto.randomBytes(4).toString('hex')}`;
+const TEST_ADMIN_PASSWORD = 'test-admin-password-4827';
 const defaults = {
   NODE_ENV: 'test',
   MONGODB_URI: `${BASE}/${DB}`,
   JWT_SECRET: 't'.repeat(40),
   ENCRYPTION_KEY: 'e'.repeat(40),
   ADMIN_EMAIL: 'admin@test.local',
-  ADMIN_PASSWORD: 'Admin@12345',
+  ADMIN_PASSWORD: TEST_ADMIN_PASSWORD,
   BCRYPT_ROUNDS: '4',
   WORKER_ENABLED: 'false',
   WORKER_BATCH_SIZE: '4',
@@ -56,7 +57,7 @@ async function login(http, email, password = PASSWORD) {
   return r.body.token;
 }
 
-const adminLogin = (http) => login(http, 'admin@test.local', 'Admin@12345');
+const adminLogin = (http) => login(http, 'admin@test.local', TEST_ADMIN_PASSWORD);
 
 async function makeReseller(http, adminToken, over = {}) {
   const email = over.email || `reseller_${rand()}@t.local`;

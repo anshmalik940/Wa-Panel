@@ -25,6 +25,13 @@ test('CORS permits the production frontend preflight and rejects unlisted origin
   );
   assert.equal(allowed.headers['access-control-allow-headers'], 'Content-Type,Authorization');
 
+  const local = await request(app)
+    .options('/api/auth/login')
+    .set('Origin', 'http://localhost:5173')
+    .set('Access-Control-Request-Method', 'POST');
+
+  assert.equal(local.headers['access-control-allow-origin'], 'http://localhost:5173');
+
   const rejected = await request(app)
     .options('/api/auth/login')
     .set('Origin', 'https://unlisted.example')

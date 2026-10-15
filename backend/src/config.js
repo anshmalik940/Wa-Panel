@@ -1,20 +1,20 @@
-require('dotenv').config({ quiet: true });
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
 const { z } = require('zod');
 
 const boolFalse = z.enum(['true', 'false']).default('false').transform((v) => v === 'true');
 const boolTrue = z.enum(['true', 'false']).default('true').transform((v) => v === 'true');
 
 const schema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z.enum(['development', 'test', 'production']),
   PORT: z.coerce.number().int().min(1).max(65535).default(5000),
   MONGODB_URI: z.string({ required_error: 'MONGODB_URI is required (e.g. mongodb://127.0.0.1:27017/wa_panel)' }).min(1, 'MONGODB_URI is required'),
   JWT_SECRET: z.string({ required_error: 'JWT_SECRET is required (at least 32 characters)' }).min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_EXPIRES_IN: z.string().default('12h'),
   ENCRYPTION_KEY: z.string({ required_error: 'ENCRYPTION_KEY is required (at least 32 characters, encrypts provider credentials)' }).min(32, 'ENCRYPTION_KEY must be at least 32 characters (used to encrypt provider credentials)'),
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(14).default(10),
-  CLIENT_URL: z.string().default('http://localhost:5173'),
-  PUBLIC_API_URL: z.string().default('http://localhost:5000'),
+  CLIENT_URL: z.string().optional(),
+  PUBLIC_API_URL: z.string().optional(),
   TRUST_PROXY: z.coerce.number().int().min(0).default(0),
   ADMIN_NAME: z.string().default('Super Admin'),
   ADMIN_EMAIL: z.string().email().optional(),
@@ -56,12 +56,47 @@ function loadConfig(env = process.env) {
     throw err;
   }
   const c = { ...parsed.data };
+  c.CLIENT_URL = c.CLIENT_URL ?? (c.NODE_ENV === 'production' ? '' : 'http://localhost:5173');
+  c.PUBLIC_API_URL = c.PUBLIC_API_URL ?? (c.NODE_ENV === 'production' ? '' : 'http://localhost:5000');
   c.RESET_RETURN_LINK = c.RESET_RETURN_LINK ? c.RESET_RETURN_LINK === 'true' : c.NODE_ENV !== 'production';
   if (c.NODE_ENV === 'production') {
     const problems = [];
     if (/change-me|example|secret-secret/i.test(c.JWT_SECRET)) problems.push('JWT_SECRET still looks like the example value');
     if (/change-me|example/i.test(c.ENCRYPTION_KEY)) problems.push('ENCRYPTION_KEY still looks like the example value');
     if (c.RESET_RETURN_LINK) problems.push('RESET_RETURN_LINK must be false in production');
+    const clientOrigins = c.CLIENT_URL.split(',').map((origin) => origin.trim()).filter(Boolean);
+    if (!clientOrigins.length) {
+      problems.push('CLIENT_URL must contain at least one HTTPS frontend origin');
+    } else if (clientOrigins[0] !== 'https://wa-panel-five.vercel.app') {
+      problems.push('CLIENT_URL must start with the deployed frontend origin https://wa-panel-five.vercel.app');
+    }
+    for (const origin of clientOrigins) {
+      try {
+        const parsedOrigin = new URL(origin);
+        if (parsedOrigin.protocol !== 'https:' || parsedOrigin.origin !== origin) {
+          problems.push('CLIENT_URL entries must be exact HTTPS origins without paths or trailing slashes');
+          break;
+        }
+        if (parsedOrigin.hostname === 'localhost' || parsedOrigin.hostname.endsWith('.localhost') || ['127.0.0.1', '[::1]'].includes(parsedOrigin.hostname)) {
+          problems.push('CLIENT_URL must not contain localhost origins in production');
+          break;
+        }
+      } catch {
+        problems.push('CLIENT_URL entries must be valid HTTPS origins');
+        break;
+      }
+    }
+    try {
+      const parsedPublicApiUrl = new URL(c.PUBLIC_API_URL);
+      if (parsedPublicApiUrl.protocol !== 'https:' || parsedPublicApiUrl.origin !== c.PUBLIC_API_URL) {
+        problems.push('PUBLIC_API_URL must be an HTTPS API origin without a path, query, or fragment');
+      }
+      if (parsedPublicApiUrl.hostname === 'localhost' || parsedPublicApiUrl.hostname.endsWith('.localhost') || ['127.0.0.1', '[::1]'].includes(parsedPublicApiUrl.hostname)) {
+        problems.push('PUBLIC_API_URL must not be a localhost address in production');
+      }
+    } catch {
+      problems.push('PUBLIC_API_URL must be a valid HTTPS API origin');
+    }
     if (problems.length) {
       const err = new Error(`Invalid production configuration:\n  - ${problems.join('\n  - ')}`);
       err.isConfigError = true;

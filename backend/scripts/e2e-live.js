@@ -5,7 +5,7 @@
  *   node scripts/e2e-live.js                 run all workflows
  *   node scripts/e2e-live.js --after-restart check that the data created by the previous run survived a restart
  *
- * Env: API_URL (default http://localhost:5000), E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD (default: the .env admin).
+ * Env: API_URL (default http://localhost:5000), E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD.
  * Every run creates its own uniquely named accounts, so it is safe to re-run.
  */
 const crypto = require('crypto');
@@ -13,8 +13,8 @@ const fs = require('fs');
 const path = require('path');
 
 const API = (process.env.API_URL || 'http://localhost:5000').replace(/\/$/, '');
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'admin@example.com';
-const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'Admin@12345';
+const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD;
 const STATE_FILE = process.env.E2E_STATE || path.join(__dirname, '.e2e-state.json');
 const PASSWORD = 'Passw0rd!x';
 const run = crypto.randomBytes(3).toString('hex');
@@ -81,6 +81,10 @@ async function afterRestart() {
 }
 
 async function main() {
+  const missingAdminCredentials = ['E2E_ADMIN_EMAIL', 'E2E_ADMIN_PASSWORD'].filter((name) => !process.env[name]);
+  if (missingAdminCredentials.length) {
+    throw new Error(`Set ${missingAdminCredentials.join(' and ')} before running this live test.`);
+  }
   const health = await call('GET', '/api/health');
   if (health.status !== 200) throw new Error(`API not healthy at ${API}: HTTP ${health.status}`);
   console.log(`Running against ${API} (run id ${run})`);

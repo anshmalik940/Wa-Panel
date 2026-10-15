@@ -49,7 +49,7 @@ If you see `querySrv ECONNREFUSED` with an Atlas `mongodb+srv://` URI, add `DNS_
 
 | Role | Email | Password | Opens |
 |---|---|---|---|
-| Admin | `ADMIN_EMAIL` from `.env` (example: `admin@example.com`) | `ADMIN_PASSWORD` (example: `Admin@12345`) | `/admin` |
+| Admin | `ADMIN_EMAIL` from `.env` | `ADMIN_PASSWORD` from `.env` | `/admin` |
 | Reseller (demo) | `reseller@demo.test` | `Demo@12345` | `/reseller` |
 | Customer (demo) | `customer@demo.test` | `Demo@12345` | `/app` |
 
@@ -78,10 +78,12 @@ Everybody signs in on the same login page; the panel opens by role.
 
 | Key | Meaning |
 |---|---|
+| `NODE_ENV`, `PORT` | Runtime mode (`development`, `test`, or `production`) and API listen port (local default `5000`; Render provides `PORT`) |
 | `MONGODB_URI` | MongoDB / Atlas connection string (with database name, e.g. `.../wa_panel`) |
 | `JWT_SECRET`, `ENCRYPTION_KEY` | ≥ 32 random characters each. Do not change `ENCRYPTION_KEY` later — saved API keys/tokens become unreadable |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | First admin, created on first start |
-| `CLIENT_URL`, `PUBLIC_API_URL` | Browser origin; public https URL of this API (used for webhooks and media links) |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | First admin bootstrap only; changing these later does not change an existing account |
+| `CLIENT_URL` | Explicit permitted browser origins for CORS; comma-separated if needed. First origin is used for password-reset links |
+| `PUBLIC_API_URL` | Public API origin used to construct webhook and media URLs |
 | `ALLOW_REAL_SEND` | Master switch for **real** sending (QR phone, Meta, voice API). `false` = only the mock providers work |
 | `DATA_DIR` | Where uploaded media and linked-phone sessions are stored (default `backend/data`). Use a persistent disk in production |
 | `DNS_SERVERS` | Optional, e.g. `8.8.8.8,8.8.4.4` when your DNS refuses Atlas SRV lookups |
@@ -101,9 +103,15 @@ and run **one** API instance (the queue worker and linked-phone sessions live in
 - In Vercel, import this repository and set the **Root Directory** to `frontend`.
 - Use the Vite framework preset, build command `npm run build`, and output directory `dist`.
 - Add the Vercel project environment variable `VITE_API_URL=https://wa-panel-1.onrender.com` (backend origin only; do not include `/api`). This value is public in the frontend bundle; never put credentials or secrets in a `VITE_*` variable.
-- In Render's backend service, set `CLIENT_URL=https://wa-panel-five.vercel.app,http://localhost:5173` (production Vercel origin first; add a custom domain there too if used). The first origin is also used to build password-reset links. CORS preflight is handled before routes and explicitly permits GET, POST, PUT, PATCH, DELETE, OPTIONS, and the Content-Type/Authorization headers.
-- Set `PUBLIC_API_URL=https://wa-panel-1.onrender.com` on Render. Keep MongoDB credentials, JWT/encryption secrets, WhatsApp credentials, and session data exclusively on the backend.
+- In Render's backend service, set `NODE_ENV=production`, `CLIENT_URL=https://wa-panel-five.vercel.app`, and `PUBLIC_API_URL=https://wa-panel-1.onrender.com`. Do not add localhost to the production allowlist. `CLIENT_URL` is also used to build password-reset links. CORS preflight is handled before routes and explicitly permits GET, POST, PUT, PATCH, DELETE, OPTIONS, and the Content-Type/Authorization headers.
+- Keep `MONGODB_URI`, `JWT_SECRET`, `ENCRYPTION_KEY`, `ADMIN_PASSWORD`, and any WhatsApp/SMTP credentials exclusively in Render's backend environment settings. Use unique strong values, never example or local values. Set `RESET_RETURN_LINK=false` and `TRUST_PROXY=1` on Render. Render supplies `PORT`; the server reads it automatically.
+- Local development uses `backend/.env` with `CLIENT_URL=http://localhost:5173` and `PUBLIC_API_URL=http://localhost:5000`. Leave `VITE_API_URL` unset in local frontend development: Vite sends relative `/api` requests through its development proxy to `http://localhost:5000`. `frontend/.env.example` documents the production-only Vercel value.
+- Backend dotenv loading resolves `backend/.env` from the source location, so `npm start` works whether launched from the repository root or `backend/`. Production startup rejects missing/non-HTTPS frontend and public API origins, localhost origins, and example secrets.
 - `frontend/vercel.json` rewrites app routes to the Vite entry point so direct visits and refreshes on React Router routes work.
+
+### Secret rotation after exposure
+
+Treat previously shared database credentials, the admin password, `JWT_SECRET`, and `ENCRYPTION_KEY` as exposed. Rotate the database password/provider credential, update `MONGODB_URI` in Render, and change the existing admin password through the application (the `ADMIN_PASSWORD` environment variable only bootstraps a new admin). Changing `JWT_SECRET` invalidates existing login tokens, so users must sign in again. Do **not** simply replace `ENCRYPTION_KEY`: saved WhatsApp/provider credentials are encrypted with it. Back up the database, re-encrypt stored credentials from the old key to the new key with a deliberate migration, verify decryption, and only then switch the Render value. The existing encryption key is intentionally not changed automatically.
 
 ## 8. Automated verification
 

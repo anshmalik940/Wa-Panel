@@ -90,10 +90,56 @@ describe('crypto + config', () => {
   });
   test('environment validation fails fast with readable messages', () => {
     assert.throws(() => loadConfig({}), /MONGODB_URI is required[\s\S]*JWT_SECRET/);
-    assert.throws(() => loadConfig({ MONGODB_URI: 'x', JWT_SECRET: 'short', ENCRYPTION_KEY: 'k'.repeat(40) }), /JWT_SECRET must be at least 32/);
+    assert.throws(() => loadConfig({ MONGODB_URI: 'x', JWT_SECRET: 'j'.repeat(32), ENCRYPTION_KEY: 'k'.repeat(32) }), /NODE_ENV/);
+    assert.throws(() => loadConfig({ NODE_ENV: 'development', MONGODB_URI: 'x', JWT_SECRET: 'short', ENCRYPTION_KEY: 'k'.repeat(40) }), /JWT_SECRET must be at least 32/);
     assert.throws(() => loadConfig({ NODE_ENV: 'production', MONGODB_URI: 'x', JWT_SECRET: 'change-me-'.repeat(5), ENCRYPTION_KEY: 'k'.repeat(40) }), /example value/);
-    const ok = loadConfig({ MONGODB_URI: 'x', JWT_SECRET: 'j'.repeat(32), ENCRYPTION_KEY: 'k'.repeat(32) });
+    const ok = loadConfig({ NODE_ENV: 'development', MONGODB_URI: 'x', JWT_SECRET: 'j'.repeat(32), ENCRYPTION_KEY: 'k'.repeat(32) });
+    assert.equal(ok.CLIENT_URL, 'http://localhost:5173');
+    assert.equal(ok.PUBLIC_API_URL, 'http://localhost:5000');
     assert.equal(ok.ALLOW_REAL_SEND, true);
-    assert.equal(loadConfig({ MONGODB_URI: 'x', JWT_SECRET: 'j'.repeat(32), ENCRYPTION_KEY: 'k'.repeat(32), ALLOW_REAL_SEND: 'false' }).ALLOW_REAL_SEND, false);
+    assert.equal(loadConfig({ NODE_ENV: 'development', MONGODB_URI: 'x', JWT_SECRET: 'j'.repeat(32), ENCRYPTION_KEY: 'k'.repeat(32), ALLOW_REAL_SEND: 'false' }).ALLOW_REAL_SEND, false);
+  });
+
+  test('production requires explicit public frontend and API origins', () => {
+    const base = {
+      NODE_ENV: 'production',
+      MONGODB_URI: 'mongodb://database.example/wa_panel',
+      JWT_SECRET: 'j'.repeat(32),
+      ENCRYPTION_KEY: 'k'.repeat(32),
+      RESET_RETURN_LINK: 'false',
+    };
+    assert.throws(() => loadConfig(base), /CLIENT_URL must contain at least one HTTPS frontend origin/);
+    assert.throws(() => loadConfig({
+      ...base,
+      CLIENT_URL: 'https://wa-panel-five.vercel.app',
+    }), /PUBLIC_API_URL must be a valid HTTPS API origin/);
+    assert.throws(() => loadConfig({
+      ...base,
+      CLIENT_URL: 'https://wa-panel-five.vercel.app,http://localhost:5173',
+      PUBLIC_API_URL: 'https://wa-panel-1.onrender.com',
+    }), /CLIENT_URL entries must be exact HTTPS origins/);
+    assert.throws(() => loadConfig({
+      ...base,
+      CLIENT_URL: 'https://localhost',
+      PUBLIC_API_URL: 'https://wa-panel-1.onrender.com',
+    }), /CLIENT_URL must not contain localhost origins/);
+    assert.throws(() => loadConfig({
+      ...base,
+      CLIENT_URL: 'https://your-backend-service.onrender.com',
+      PUBLIC_API_URL: 'https://wa-panel-1.onrender.com',
+    }), /CLIENT_URL must start with the deployed frontend origin/);
+    assert.throws(() => loadConfig({
+      ...base,
+      CLIENT_URL: 'https://wa-panel-five.vercel.app',
+      PUBLIC_API_URL: 'http://localhost:5000',
+    }), /PUBLIC_API_URL must be an HTTPS API origin/);
+
+    const production = loadConfig({
+      ...base,
+      CLIENT_URL: 'https://wa-panel-five.vercel.app',
+      PUBLIC_API_URL: 'https://wa-panel-1.onrender.com',
+    });
+    assert.equal(production.CLIENT_URL, 'https://wa-panel-five.vercel.app');
+    assert.equal(production.PUBLIC_API_URL, 'https://wa-panel-1.onrender.com');
   });
 });
