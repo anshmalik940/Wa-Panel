@@ -137,7 +137,7 @@ export default function Campaigns({ channel }) {
               loading={list.loading && !live}
               empty={
                 <EmptyState title={filtered ? 'No campaigns match your filters' : voiceOnly ? 'No call campaigns yet' : 'No campaigns yet'} action={!filtered ? <Link className="btn btn-primary" to={newPath}>{voiceOnly ? 'Create your first call campaign' : 'Create your first campaign'}</Link> : null}>
-                  {filtered ? 'Try a different search or clear the filters.' : voiceOnly ? 'You need contacts and a caller ID (CLI) assigned to you.' : 'You need contacts, an approved template and a connected WhatsApp provider.'}
+                  {filtered ? 'Try a different search or clear the filters.' : voiceOnly ? 'You need contacts and a caller ID (CLI) assigned to you.' : 'You need contacts and an approved template. If WhatsApp activation is pending, please ask your panel administrator to activate the shared connection.'}
                 </EmptyState>
               }
             />

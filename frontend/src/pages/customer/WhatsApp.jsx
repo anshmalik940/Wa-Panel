@@ -142,7 +142,11 @@ export default function WhatsApp() {
       <PageHeader title="WhatsApp" subtitle="Campaigns use the platform connection automatically." />
       <Card title="Connection status" actions={<Badge tone={connection.ready ? 'ok' : 'warn'}>{connection.ready ? 'Ready' : 'Not ready'}</Badge>}>
         <p><strong>Sending through: {sourceLabel} — {connection.ready ? 'Ready' : 'Not ready'}</strong></p>
-        {!connection.ready ? <Alert tone="warn">Sending is not set up yet. Please contact your administrator.</Alert> : null}
+        {!connection.ready ? (
+          <Alert tone="info" title="Waiting for WhatsApp activation">
+            The shared connection is managed by your panel administrator. Please ask them to activate it; if personal phone linking is enabled for your account, those options will appear below.
+          </Alert>
+        ) : null}
         {connection.displayPhone ? <p className="muted small">Connected number: {connection.displayPhone}</p> : null}
         {simulated ? <Alert tone="info">Test mode: messages are simulated.</Alert> : null}
       </Card>

@@ -30,8 +30,12 @@ export default function Dashboard() {
         }
       />
       {wa.status !== 'connected' ? (
-        <Alert tone="warn" title="WhatsApp is not connected">
-          Campaigns can only be started after you connect a provider. <Link to="/app/whatsapp">Open WhatsApp settings</Link> and run “Test connection” (the Mock provider needs no credentials).
+        <Alert tone="info" title="WhatsApp activation is pending">
+          <p>Campaign sending is not active for your account yet. Please ask your panel administrator to activate the shared WhatsApp connection.</p>
+          <div className="row gap-s wrap mt">
+            <Link className="btn btn-sm" to="/app/whatsapp">View WhatsApp settings</Link>
+            <span className="muted small">If your account has personal phone linking enabled, you can set it up there.</span>
+          </div>
         </Alert>
       ) : (
         <Alert tone="info">
