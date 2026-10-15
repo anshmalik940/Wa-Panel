@@ -14,7 +14,12 @@ function createApp() {
   app.disable('x-powered-by');
   app.use(helmet());
   const origins = config.CLIENT_URL.split(',').map((s) => s.trim()).filter(Boolean);
-  app.use(cors({ origin: origins, exposedHeaders: ['Content-Disposition'] }));
+  app.use(cors({
+    origin: origins,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['Content-Disposition'],
+  }));
   // keep the exact bytes: webhook signatures are computed over the raw body
   app.use(express.json({ limit: '6mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 

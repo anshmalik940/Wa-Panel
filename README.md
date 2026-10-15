@@ -101,7 +101,7 @@ and run **one** API instance (the queue worker and linked-phone sessions live in
 - In Vercel, import this repository and set the **Root Directory** to `frontend`.
 - Use the Vite framework preset, build command `npm run build`, and output directory `dist`.
 - Add the Vercel project environment variable `VITE_API_URL=https://wa-panel-1.onrender.com` (backend origin only; do not include `/api`). This value is public in the frontend bundle; never put credentials or secrets in a `VITE_*` variable.
-- In Render's backend service, set `CLIENT_URL=https://wa-panel-five.vercel.app,http://localhost:5173` (production Vercel origin first; add a custom domain there too if used). The first origin is also used to build password-reset links.
+- In Render's backend service, set `CLIENT_URL=https://wa-panel-five.vercel.app,http://localhost:5173` (production Vercel origin first; add a custom domain there too if used). The first origin is also used to build password-reset links. CORS preflight is handled before routes and explicitly permits GET, POST, PUT, PATCH, DELETE, OPTIONS, and the Content-Type/Authorization headers.
 - Set `PUBLIC_API_URL=https://wa-panel-1.onrender.com` on Render. Keep MongoDB credentials, JWT/encryption secrets, WhatsApp credentials, and session data exclusively on the backend.
 - `frontend/vercel.json` rewrites app routes to the Vite entry point so direct visits and refreshes on React Router routes work.
 
