@@ -16,6 +16,9 @@ export default defineConfig(({ command, mode }) => {
     } catch {
       throw new Error('VITE_API_URL must be a valid HTTPS backend origin without an /api path.');
     }
+    if (parsedApiUrl.hostname === 'your-backend-service.onrender.com') {
+      throw new Error('VITE_API_URL still uses the example Render hostname. Set it to the deployed backend origin before building.');
+    }
     if (parsedApiUrl.protocol !== 'https:' || !['', '/'].includes(parsedApiUrl.pathname) || parsedApiUrl.search || parsedApiUrl.hash) {
       throw new Error('VITE_API_URL must be an HTTPS backend origin without a path, query, or fragment.');
     }
