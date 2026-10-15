@@ -5,3 +5,6 @@
 dist/
 build/
 coverage/
+
+backend/data/wa-sessions/
+backend/data/
