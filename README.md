@@ -96,6 +96,15 @@ cd ../backend && NODE_ENV=production npm start     # serves the built UI too
 Use strong secrets, `PUBLIC_API_URL` = your https URL, `TRUST_PROXY=1` behind a proxy, SMTP for reset emails, a persistent `DATA_DIR`,
 and run **one** API instance (the queue worker and linked-phone sessions live inside the API process).
 
+### Deploy the frontend on Vercel and keep the API on Render
+
+- In Vercel, import this repository and set the **Root Directory** to `frontend`.
+- Use the Vite framework preset, build command `npm run build`, and output directory `dist`.
+- Add the Vercel project environment variable `VITE_API_URL=https://wa-panel-1.onrender.com` (backend origin only; do not include `/api`). This value is public in the frontend bundle; never put credentials or secrets in a `VITE_*` variable.
+- In Render's backend service, set `CLIENT_URL=https://wa-panel-five.vercel.app,http://localhost:5173` (production Vercel origin first; add a custom domain there too if used). The first origin is also used to build password-reset links.
+- Set `PUBLIC_API_URL=https://wa-panel-1.onrender.com` on Render. Keep MongoDB credentials, JWT/encryption secrets, WhatsApp credentials, and session data exclusively on the backend.
+- `frontend/vercel.json` rewrites app routes to the Vite entry point so direct visits and refreshes on React Router routes work.
+
 ## 8. Automated verification
 
 ```bash

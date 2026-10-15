@@ -1,5 +1,5 @@
 // Thin fetch wrapper. Every call returns parsed JSON or throws ApiError with a readable message.
-const BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+const BASE = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
 const KEY = 'wa_panel_token';
 
 let memoryToken = null; // fallback when localStorage is blocked
