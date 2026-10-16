@@ -41,6 +41,7 @@ const schema = new Schema(
 );
 
 schema.index({ ownerId: 1, submissionKey: 1 }, { unique: true });
+schema.index({ ownerId: 1, createdAt: -1 });
 schema.index({ ownerId: 1, status: 1, createdAt: -1 });
 schema.index({ status: 1, scheduledAt: 1 });
 

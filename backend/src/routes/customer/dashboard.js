@@ -1,9 +1,9 @@
 const express = require('express');
-const { Contact, Template, Campaign, CampaignArchive, Usage, MonthlyUsageSummary, CreditTransaction } = require('../../models');
+const { Contact, Template, Campaign, CampaignMessage, CampaignArchive, Usage, MonthlyUsageSummary, CreditTransaction } = require('../../models');
 const { HttpError, asyncHandler: ah } = require('../../utils/httpError');
 const { listAudit } = require('../../utils/auditQuery');
 const { getUsage, periodOf, shiftPeriod, periodBounds, finalizePreviousMonth, limitsOf } = require('../../services/usage');
-const { getCampaignStats, funnel, statusCounts } = require('../../services/campaignService');
+const { funnel, statusCounts } = require('../../services/campaignService');
 const { User } = require('../../models');
 const { validate } = require('../../middleware/validate');
 const { z } = require('zod');
@@ -45,7 +45,18 @@ router.get(
     for (const row of archivedCampRows) campaignCounts[row._id] = (campaignCounts[row._id] || 0) + row.n;
     const messageCounts = { ...msgBy };
     for (const row of archivedMsgRows) messageCounts[row._id] = (messageCounts[row._id] || 0) + row.n;
-    const recentStats = await Promise.all(recent.map((c) => getCampaignStats(c._id)));
+    const recentRows = recent.length
+      ? await CampaignMessage.aggregate([
+        { $match: { campaignId: { $in: recent.map((campaign) => campaign._id) } } },
+        { $group: { _id: { campaignId: '$campaignId', status: '$status' }, n: { $sum: 1 } } },
+      ])
+      : [];
+    const recentCounts = new Map(recent.map((campaign) => [String(campaign._id), {}]));
+    for (const row of recentRows) {
+      const counts = recentCounts.get(String(row._id.campaignId));
+      counts[row._id.status] = row.n;
+    }
+    const recentStats = recent.map((campaign) => funnel(recentCounts.get(String(campaign._id))));
     const f = funnel(messageCounts);
     res.json({
       contacts: { total, valid, invalid, optedOut },
