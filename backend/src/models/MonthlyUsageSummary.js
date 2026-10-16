@@ -9,6 +9,8 @@ const schema = new Schema(
     totals: {
       messagesSent: { type: Number, default: 0 },
       messagesFailed: { type: Number, default: 0 },
+      messagesUnknown: { type: Number, default: 0 },
+      messagesCut: { type: Number, default: 0 },
       simulatedMessages: { type: Number, default: 0 },
       creditsSpent: { type: Number, default: 0 },
       voiceCalls: { type: Number, default: 0 },

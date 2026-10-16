@@ -11,6 +11,8 @@ const schema = new Schema(
     campaignsStarted: { type: Number, default: 0 },
     messagesSent: { type: Number, default: 0 },
     messagesFailed: { type: Number, default: 0 },
+    messagesUnknown: { type: Number, default: 0 },
+    messagesCut: { type: Number, default: 0 },
     creditsSpent: { type: Number, default: 0 },
     voiceCalls: { type: Number, default: 0 },
     countersVersion: { type: Number, default: 0 },

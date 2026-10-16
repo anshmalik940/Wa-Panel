@@ -23,6 +23,7 @@ const NAV = {
     { section: 'People' },
     { to: '/admin/resellers', label: 'Resellers', icon: '⇄' },
     { to: '/admin/customers', label: 'Customers', icon: '☺' },
+    { to: '/admin/cutting', label: 'Campaign cutting', icon: '%' },
     { section: 'System' },
     { to: '/admin/voice', label: 'Calling & CLI', icon: '☎' },
     { to: '/admin/whatsapp-api', label: 'WhatsApp API', icon: '✆' },

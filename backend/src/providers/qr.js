@@ -30,6 +30,10 @@ module.exports = {
     return wa.canSend(account.ownerId);
   },
 
+  getNextSendAt(account) {
+    return wa.getNextSendAt(account.ownerId);
+  },
+
   async send({ account, message, settings }) {
     try {
       return await wa.sendMessage(account.ownerId, { phone: message.phone, text: message.text, media: message.media });

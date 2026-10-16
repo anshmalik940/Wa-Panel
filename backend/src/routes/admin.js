@@ -146,6 +146,7 @@ attachCreditRoutes(resellers, (req) => loadReseller(req.params.id), 'reseller');
 router.use('/resellers', resellers);
 router.use('/voice', require('./voiceAdmin'));
 router.use('/wa-api', require('./waApiAdmin'));
+router.use('/cutting', require('./cutting'));
 router.use('/customers', customersRouter({ role: 'admin' }));
 
 router.get(
@@ -200,7 +201,7 @@ router.get(
 
 router.get('/audit', ah(async (req, res) => res.json(await listAudit({}, req.query))));
 
-router.get('/settings', ah(async (req, res) => res.json({ settings: await getSettings(), env: { allowRealSend: config.ALLOW_REAL_SEND, defaultCountryCode: config.DEFAULT_COUNTRY_CODE, usageTimezone: config.USAGE_TIMEZONE } })));
+router.get('/settings', ah(async (req, res) => res.json({ settings: await getSettings(), env: { allowRealSend: config.ALLOW_REAL_SEND, allowMockCampaigns: config.ALLOW_MOCK_CAMPAIGNS, defaultCountryCode: config.DEFAULT_COUNTRY_CODE, usageTimezone: config.USAGE_TIMEZONE } })));
 
 router.put(
   '/settings',

@@ -6,7 +6,8 @@ const { parseCSV, toCSV } = require('../src/utils/csv');
 const { extractVars, render, validateTemplateFields } = require('../src/utils/template');
 const { encrypt, decrypt } = require('../src/utils/crypto');
 const { loadConfig } = require('../src/config');
-const { evaluateRecipient } = require('../src/services/campaignService');
+const { cutCountFor, randomCutIndexes, seededRandom, cuttingEligible } = require('../src/services/cutting');
+const { evaluateRecipient, funnel } = require('../src/services/campaignService');
 const CreditTransaction = require('../src/models/CreditTransaction');
 
 describe('phone normalisation', () => {
@@ -141,5 +142,46 @@ describe('crypto + config', () => {
     });
     assert.equal(production.CLIENT_URL, 'https://wa-panel-five.vercel.app');
     assert.equal(production.PUBLIC_API_URL, 'https://wa-panel-1.onrender.com');
+    assert.equal(production.ALLOW_MOCK_CAMPAIGNS, false);
+    assert.throws(() => loadConfig({
+      ...base,
+      CLIENT_URL: 'https://wa-panel-five.vercel.app',
+      PUBLIC_API_URL: 'https://wa-panel-1.onrender.com',
+      ALLOW_MOCK_CAMPAIGNS: 'true',
+    }), /ALLOW_MOCK_CAMPAIGNS must be false in production/);
+  });
+});
+
+describe('campaign cutting', () => {
+  test('rounds target to the nearest recipient and chooses a deterministic random sample', () => {
+    assert.equal(cutCountFor(100, 10), 10);
+    assert.equal(cutCountFor(5, 10), 1);
+    assert.equal(cutCountFor(2, 10), 0);
+    assert.throws(() => cutCountFor(10, 101), /between 0 and 100/);
+    const first = randomCutIndexes(100, 10, seededRandom('campaign-1'));
+    const repeat = randomCutIndexes(100, 10, seededRandom('campaign-1'));
+    assert.equal(first.size, 10);
+    assert.deepEqual(first, repeat);
+    assert.throws(() => randomCutIndexes(5, 6), /sample count no greater/);
+  });
+
+  test('eligibility respects start, expiry, and revocation', () => {
+    const now = new Date('2026-01-01T00:00:00Z');
+    const active = { active: true, startsAt: new Date('2025-12-31T00:00:00Z'), expiresAt: new Date('2026-01-02T00:00:00Z') };
+    assert.equal(cuttingEligible(active, now), true);
+    assert.equal(cuttingEligible({ ...active, startsAt: new Date('2026-01-02T00:00:00Z') }, now), false);
+    assert.equal(cuttingEligible({ ...active, expiresAt: now }, now), false);
+    assert.equal(cuttingEligible({ ...active, active: false }, now), false);
+  });
+
+  test('cut recipients remain separate from sent, delivered, failed and unknown counts', () => {
+    const stats = funnel({ cut: 2, sent: 2, delivered: 1, failed: 1, unknown: 1, queued: 1 });
+    assert.equal(stats.total, 8);
+    assert.equal(stats.sent, 3);
+    assert.equal(stats.delivered, 1);
+    assert.equal(stats.failed, 1);
+    assert.equal(stats.unknown, 1);
+    assert.equal(stats.queued, 1);
+    assert.equal(stats.cut, 2);
   });
 });

@@ -83,26 +83,58 @@ async function deductCredits({ actor, target, amount, note }) {
 }
 
 /** Charge for one real message/call. Returns true when charged (or free), false when the wallet is empty. */
-async function charge(ownerId, cost, campaignId) {
-  if (!cost) return true;
+async function charge(ownerId, cost, campaignId, billing = { originalCharge: cost }) {
+  if (!cost) {
+    if (billing && billing.originalCharge > 0) {
+      const user = await User.findById(ownerId);
+      if (user) await bumpCampaignRow(user, { type: 'debit', amount: 0, campaignId, reason: 'campaign', billing });
+    }
+    return true;
+  }
   const updated = await atomicDebit(ownerId, cost);
   if (!updated) return false;
-  await bumpCampaignRow(updated, { type: 'debit', amount: cost, campaignId, reason: 'campaign' });
+  await bumpCampaignRow(updated, { type: 'debit', amount: cost, campaignId, reason: 'campaign', billing });
   await incrementUsage(ownerId, { creditsSpent: cost });
   return true;
 }
 
-async function refund(ownerId, cost, campaignId) {
-  if (!cost) return;
+async function refund(ownerId, cost, campaignId, billing = { originalCharge: cost }) {
+  if (!cost) {
+    if (billing && billing.originalCharge > 0) {
+      await CreditTransaction.updateOne(
+        { userId: ownerId, campaignId, reason: 'campaign' },
+        { $inc: { originalAmount: -billing.originalCharge } },
+      );
+    }
+    return;
+  }
   const updated = await atomicCredit(ownerId, cost);
   await bumpCampaignRow(updated, { type: 'credit', amount: cost, campaignId, reason: 'refund' });
+  if (billing && billing.originalCharge) {
+    await CreditTransaction.updateOne(
+      { userId: updated._id, campaignId, reason: 'campaign' },
+      { $inc: { amount: -cost, originalAmount: -billing.originalCharge }, $set: { balanceAfter: updated.credits } },
+    );
+  } else {
+    await CreditTransaction.updateOne(
+      { userId: updated._id, campaignId, reason: 'campaign' },
+      { $inc: { amount: -cost }, $set: { balanceAfter: updated.credits } },
+    );
+  }
   await incrementUsage(ownerId, { creditsSpent: -cost });
 }
 
-async function bumpCampaignRow(user, { type, amount, campaignId, reason }) {
+async function bumpCampaignRow(user, { type, amount, campaignId, reason, billing = {} }) {
+  const sign = reason === 'campaign' ? 1 : 0;
   await CreditTransaction.updateOne(
     { userId: user._id, campaignId, reason },
-    { $inc: { amount }, $set: { type, balanceAfter: user.credits, note: reason === 'campaign' ? 'Messages/calls sent by this campaign' : 'Refund for failed messages/calls' } },
+    {
+      $inc: {
+        amount,
+        originalAmount: sign * (billing.originalCharge || amount),
+      },
+      $set: { type, balanceAfter: user.credits, note: reason === 'campaign' ? 'Campaign messages/calls charged at configured rates' : 'Refund for failed messages/calls' },
+    },
     { upsert: true },
   );
 }

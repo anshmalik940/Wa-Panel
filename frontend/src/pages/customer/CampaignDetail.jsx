@@ -8,7 +8,7 @@ import { TemplatePreview } from './Templates.jsx';
 import { MediaPreview } from '../../components/Media.jsx';
 
 const TABS = [
-  ['', 'All'], ['queued', 'Waiting'], ['sent', 'Sent'], ['delivered', 'Delivered'], ['read', 'Read'], ['failed', 'Failed'], ['excluded', 'Excluded'], ['cancelled', 'Cancelled'],
+  ['', 'All'], ['queued', 'Queued'], ['sending', 'Processing'], ['sent', 'Sent'], ['delivered', 'Delivered'], ['read', 'Read'], ['failed', 'Failed'], ['unknown', 'Outcome unknown'], ['cut', 'Cutting off'], ['excluded', 'Excluded'], ['cancelled', 'Cancelled'],
 ];
 
 function Recipients({ id, live, refreshKey }) {
@@ -22,8 +22,12 @@ function Recipients({ id, live, refreshKey }) {
   const columns = [
     { key: 'to', header: 'Recipient', render: (m) => <div><strong>{m.contactName || '(no name)'}</strong><div className="mono muted">{m.phone}</div></div> },
     { key: 'status', header: 'Status', render: (m) => <StatusBadge status={m.status} /> },
+    { key: 'original', header: 'Original charge', className: 'nowrap', render: (m) => (m.simulated || !m.billing ? '—' : fmtNumber(m.billing.originalCharge)) },
+    { key: 'cut', header: 'Cutting', className: 'nowrap', render: (m) => (m.simulated ? '—' : m.isCut ? `Cutting off · ${m.cuttingPercentage || 0}%` : 'No') },
+    { key: 'final', header: 'Final charge', className: 'nowrap', render: (m) => (m.simulated || !m.billing ? '—' : fmtNumber(m.billing.refunded ? 0 : m.billing.finalCharge)) },
+    { key: 'billingTime', header: 'Cut at', className: 'nowrap', render: (m) => (m.isCut ? fmtDate(m.cutAt || m.updatedAt) : '—') },
     { key: 'detail', header: 'Detail', render: (m) => (m.status === 'excluded' ? excludedReasonText(m.excludedReason) : m.error ? <span style={{ color: 'var(--danger)' }}>{m.error}</span> : <span className="muted small pre">{m.text}</span>) },
-    { key: 'time', header: 'Last update', className: 'nowrap', render: (m) => fmtDate(m.readAt || m.deliveredAt || m.failedAt || m.sentAt || m.updatedAt) },
+    { key: 'time', header: 'Last update', className: 'nowrap', render: (m) => fmtDate(m.readAt || m.deliveredAt || m.unknownAt || m.failedAt || m.sentAt || m.updatedAt) },
   ];
   return (
     <Card title="Recipients" pad={false}>
@@ -184,12 +188,21 @@ export default function CampaignDetail() {
       {c.provider === 'wa_http' ? <Alert tone="info">Delivery receipts are not available for this provider.</Alert> : null}
       {c.lastError ? <Alert tone="warn">{c.lastError}</Alert> : null}
       {c.status === 'scheduled' ? <Alert tone="info">Scheduled to start at <strong>{fmtDate(c.scheduledAt)}</strong>.</Alert> : null}
+      {live && c.nextBatchAt ? <Alert tone="info">Next worker batch is scheduled after {fmtDate(c.nextBatchAt)}. Provider-specific pacing may add additional delay.</Alert> : null}
 
       <div className="grid grid-4 mb">
         <div className="stat"><div className="stat-label">Status</div><div className="stat-value" style={{ fontSize: 20, marginTop: 6 }}><StatusBadge status={c.status} /></div><div className="stat-sub">{live ? 'Updating live…' : c.completedAt ? `Finished ${fmtDate(c.completedAt)}` : c.startedAt ? `Started ${fmtDate(c.startedAt)}` : 'Not started'}</div></div>
         <Stat label="Recipients" value={fmtNumber(st.recipients)} sub={`${fmtNumber(st.excluded)} excluded`} />
-        <Stat label="Waiting" value={fmtNumber(st.queued + st.sending)} sub={st.cancelled ? `${fmtNumber(st.cancelled)} cancelled` : undefined} />
+        <Stat label="Queued" value={fmtNumber(st.queued)} />
+        <Stat label="Processing" value={fmtNumber(st.sending)} />
+      </div>
+      <div className="grid grid-4 mb">
+        <Stat label="Sent / submitted" value={fmtNumber(st.sent)} />
+        <Stat label="Delivered" value={fmtNumber(st.delivered)} />
         <Stat label="Failed" value={fmtNumber(st.failed)} tone={st.failed ? 'danger' : undefined} />
+        <Stat label="Outcome unknown" value={fmtNumber(st.unknown)} tone={st.unknown ? 'warn' : undefined} />
+        <Stat label="Cutting off" value={fmtNumber(st.cut || 0)} />
+        <Stat label="Cancelled" value={fmtNumber(st.cancelled)} />
       </div>
 
       <div className="grid grid-2 mb">
@@ -197,7 +210,7 @@ export default function CampaignDetail() {
           {st.recipients ? <Funnel stats={st} voice={isVoice} /> : <EmptyState title="Nothing to report yet">Recipients appear here once the campaign has been started.</EmptyState>}
         </Card>
         <Card title={isVoice ? 'Why some were not called' : 'Why some did not get the message'}>
-          {report.excludedReasons.length || report.failureReasons.length ? (
+          {report.excludedReasons.length || report.failureReasons.length || report.unknownReasons.length ? (
             <>
               {report.excludedReasons.length ? (
                 <>
@@ -215,12 +228,31 @@ export default function CampaignDetail() {
                   </ul>
                 </>
               ) : null}
+              {report.unknownReasons.length ? (
+                <>
+                  <div className="small muted" style={{ fontWeight: 600 }}>Provider outcome unknown (not retried)</div>
+                  <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                    {report.unknownReasons.map((r) => <li key={r.reason || 'unknown'}>{r.reason || 'Provider did not confirm acceptance'} — {fmtNumber(r.count)}</li>)}
+                  </ul>
+                </>
+              ) : null}
             </>
           ) : (
             <p className="muted">No exclusions or failures.</p>
           )}
         </Card>
       </div>
+      {!report.simulated ? (
+        <Card title="Billing breakdown" className="mb">
+          <p className="muted small">All eligible recipients are charged at the configured full per-message/call rate, including cut recipients that are deliberately not sent. An ambiguous provider timeout/5xx is also kept charged and never retried to avoid duplicate sends; explicit provider rejections are refunded. Delivery status is reported independently.</p>
+          <div className="grid grid-4">
+            <Stat label="Charged recipients / calls" value={fmtNumber(report.billing.messages)} />
+            <Stat label="Cutting off" value={fmtNumber(report.billing.cutMessages || 0)} />
+            <Stat label="Cut percentage" value={`${fmtNumber(c.cuttingPercentage || 0)}%`} />
+            <Stat label="Total charge (credits)" value={fmtNumber(report.billing.finalCharge)} />
+          </div>
+        </Card>
+      ) : null}
 
       {st.recipients || st.excluded ? <Recipients id={c._id} live={live} refreshKey={tick} /> : null}
 

@@ -24,6 +24,8 @@ export default function Usage() {
     { key: 'messages', header: 'Messages counted', render: (r) => fmtNumber(r.messages) },
     { key: 'simulated', header: 'Of which simulated', render: (r) => fmtNumber(r.simulatedMessages) },
     { key: 'failed', header: 'Failed', render: (r) => fmtNumber(r.messagesFailed) },
+    { key: 'unknown', header: 'Outcome unknown', render: (r) => fmtNumber(r.messagesUnknown || 0) },
+    { key: 'cut', header: 'Cutting off', render: (r) => fmtNumber(r.messagesCut || 0) },
     { key: 'credits', header: 'Credits used', render: (r) => fmtNumber(r.creditsSpent) },
     { key: 'calls', header: 'Calls', render: (r) => fmtNumber(r.voiceCalls) },
     { key: 'campaigns', header: 'Campaigns started', render: (r) => fmtNumber(r.campaignsStarted) },
@@ -36,7 +38,7 @@ export default function Usage() {
         <Card title={`Last month summary (${monthName(u.lastMonthSummary.period)})`}>
           {u.lastMonthSummary.approximate ? <Alert tone="warn">This legacy month is approximate because detailed counters were not recorded at the time.</Alert> : null}
           <div className="grid grid-4">
-            <Stat label="Messages sent" value={fmtNumber(u.lastMonthSummary.messagesSent)} sub={`${fmtNumber(u.lastMonthSummary.messagesFailed)} failed · ${fmtNumber(u.lastMonthSummary.simulatedMessages)} simulated`} />
+            <Stat label="Messages sent" value={fmtNumber(u.lastMonthSummary.messagesSent)} sub={`${fmtNumber(u.lastMonthSummary.messagesFailed)} failed · ${fmtNumber(u.lastMonthSummary.messagesUnknown || 0)} unknown · ${fmtNumber(u.lastMonthSummary.messagesCut || 0)} cutting off · ${fmtNumber(u.lastMonthSummary.simulatedMessages)} simulated`} />
             <Stat label="Credits used" value={fmtNumber(u.lastMonthSummary.creditsSpent)} />
             <Stat label="Voice calls" value={fmtNumber(u.lastMonthSummary.voiceCalls)} />
             <Stat label="Campaigns started" value={fmtNumber(u.lastMonthSummary.campaignsStarted)} />
@@ -59,7 +61,7 @@ export default function Usage() {
             {fmtNumber(u.messages.used)} {isCurrent ? <span className="muted" style={{ fontSize: 16 }}>/ {fmtNumber(u.messages.limit)}</span> : null}
           </div>
           {isCurrent ? <div className="mt"><Progress value={u.messages.used} max={u.messages.limit} label="Messages used" /></div> : null}
-          <p className="muted small mt">{isCurrent ? `${fmtNumber(u.messages.remaining)} remaining · ` : ''}{fmtNumber(u.messages.simulated)} simulated</p>
+          <p className="muted small mt">{isCurrent ? `${fmtNumber(u.messages.remaining)} remaining · ` : ''}{fmtNumber(u.messages.simulated)} simulated · {fmtNumber(u.messages.unknown || 0)} outcome unknown · {fmtNumber(u.messages.cut || 0)} cutting off</p>
         </Card>
         <Card title="Contacts">
           <div className="stat-value">

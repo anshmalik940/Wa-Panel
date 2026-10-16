@@ -209,11 +209,11 @@ function buildParams(record, { phone, text, media }, apiKey) {
   ].filter(([name]) => name);
 
   let imageIndex = 0;
+  const firstImageParam = names[record.mediaMapping.image] || record.mediaMapping.image;
+  const secondImageParam = firstImageParam === names.img1 ? names.img2 : names.img1;
   for (const item of mediaItems(media)) {
     if (item.kind === 'image') {
-      const configured = imageIndex === 0 ? record.mediaMapping.image : names.img2;
-      const otherImageKey = configured === 'img1' ? 'img2' : 'img1';
-      const name = imageIndex === 0 ? (names[configured] || configured) : names[otherImageKey] || names.img2;
+      const name = imageIndex === 0 ? firstImageParam : secondImageParam;
       values.push([name, item.url]);
       imageIndex += 1;
     } else if (item.kind === 'document') {

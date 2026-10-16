@@ -62,7 +62,7 @@ async function load(req) {
   return c;
 }
 
-const brief = (s) => ({ recipients: s.recipients, excluded: s.excluded, queued: s.queued, sent: s.sent, delivered: s.delivered, read: s.read, failed: s.failed, cancelled: s.cancelled });
+const brief = (s) => ({ recipients: s.recipients, excluded: s.excluded, queued: s.queued, processing: s.sending, sent: s.sent, delivered: s.delivered, read: s.read, failed: s.failed, unknown: s.unknown, cut: s.cut, cancelled: s.cancelled });
 
 router.get(
   '/',
@@ -74,7 +74,7 @@ router.get(
     if (req.query.q) filter.name = new RegExp(escapeRegex(String(req.query.q).slice(0, 100)), 'i');
     const pp = pageParams(req.query);
     const [rows, total] = await Promise.all([Campaign.find(filter).sort({ createdAt: -1 }).skip(pp.skip).limit(pp.limit), Campaign.countDocuments(filter)]);
-    const stats = await Promise.all(rows.map((c) => svc.getCampaignStats(c._id)));
+    const stats = await Promise.all(rows.map((c) => svc.getCampaignStats(c._id, ['mock', 'voice_mock'].includes(c.provider))));
     res.json(pageResult(rows.map((c, i) => ({ ...c.toJSON(), stats: brief(stats[i]) })), total, pp));
   }),
 );
@@ -260,17 +260,20 @@ router.delete(
 
 /* ---- per-recipient report ---- */
 const STATUS_GROUPS = {
-  queued: ['queued', 'sending'],
+  queued: ['queued'],
+  sending: ['sending'],
   sent: ['sent', 'simulated_sent'],
   delivered: ['delivered', 'simulated_delivered'],
   read: ['read', 'simulated_read'],
   failed: ['failed', 'simulated_failed'],
+  unknown: ['unknown'],
+  cut: ['cut'],
   excluded: ['excluded'],
   cancelled: ['cancelled'],
 };
 
 function messageFilter(campaign, q) {
-  const f = { campaignId: campaign._id, ownerId: campaign.ownerId };
+  const f = { campaignId: campaign._id, ownerId: campaign.ownerId, simulated: ['mock', 'voice_mock'].includes(campaign.provider) };
   if (STATUS_GROUPS[q.status]) f.status = { $in: STATUS_GROUPS[q.status] };
   if (q.q) {
     const r = new RegExp(escapeRegex(String(q.q).slice(0, 80)), 'i');
@@ -297,10 +300,11 @@ router.get(
   '/:id/export',
   ah(async (req, res) => {
     const c = await load(req);
-    const rows = [['name', 'phone', 'status', 'simulated', 'excluded_reason', 'error', 'sent_at', 'delivered_at', 'read_at', 'failed_at', 'message']];
+    const rows = [['name', 'phone', 'status', 'simulated', 'cut', 'charge_credits', 'error', 'sent_at', 'delivered_at', 'read_at', 'failed_at', 'cut_at', 'message']];
     for await (const m of CampaignMessage.find(messageFilter(c, req.query)).sort({ _id: 1 }).lean().cursor()) {
       const iso = (d) => (d ? new Date(d).toISOString() : '');
-      rows.push([m.contactName, m.phone, m.status, m.simulated ? 'yes' : 'no', m.excludedReason, m.error, iso(m.sentAt), iso(m.deliveredAt), iso(m.readAt), iso(m.failedAt), m.text]);
+      const billing = m.simulated ? null : m.billing;
+      rows.push([m.contactName, m.phone, m.status === 'cut' ? 'Cutting off' : m.status, m.simulated ? 'yes' : 'no', m.isCut ? 'yes' : 'no', billing ? (billing.refunded ? 0 : billing.finalCharge) : '', m.error, iso(m.sentAt), iso(m.deliveredAt), iso(m.readAt), iso(m.failedAt), iso(m.cutAt), m.text]);
     }
     await audit(req, 'campaign.export', { targetType: 'campaign', targetId: c._id, ownerId: req.user._id });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

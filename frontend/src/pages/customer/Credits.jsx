@@ -34,6 +34,14 @@ export default function Credits() {
         <Stat label="Per message" value={fmtNumber(costs.message)} sub="credits for each real WhatsApp message" />
         <Stat label="Per call" value={fmtNumber(costs.call)} sub="credits for each voice call" />
       </div>
+      {info.data.cutting ? (
+        <Alert tone={info.data.cutting.eligible ? 'info' : 'warn'} title={info.data.cutting.eligible ? 'Campaign cutting is active' : 'Campaign cutting is not currently eligible'}>
+          {info.data.cutting.percentage}% of eligible real-campaign recipients are marked “Cutting off”; the full configured campaign credits are still charged.
+          {!info.data.cutting.eligible && new Date(info.data.cutting.startsAt) > new Date()
+            ? ` Starts ${new Date(info.data.cutting.startsAt).toLocaleString()}.`
+            : info.data.cutting.expiresAt ? ` Expires ${new Date(info.data.cutting.expiresAt).toLocaleString()}.` : ''}
+        </Alert>
+      ) : null}
       <Card title="Credit history" pad={false}>
         <LedgerTable ledger={ledger} campaignLinks />
       </Card>

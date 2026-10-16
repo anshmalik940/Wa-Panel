@@ -18,6 +18,7 @@ const ResellerDetail = lazy(() => import('./pages/admin/Resellers.jsx').then((m)
 const Settings = lazy(() => import('./pages/admin/Settings.jsx'));
 const Voice = lazy(() => import('./pages/admin/Voice.jsx'));
 const WhatsAppApi = lazy(() => import('./pages/admin/WhatsAppApi.jsx'));
+const Cutting = lazy(() => import('./pages/admin/Cutting.jsx'));
 const ResellerDashboard = lazy(() => import('./pages/reseller/ResellerDashboard.jsx'));
 const Dashboard = lazy(() => import('./pages/customer/Dashboard.jsx'));
 const Contacts = lazy(() => import('./pages/customer/Contacts.jsx'));
@@ -89,6 +90,7 @@ export default function App() {
         <Route path="audit" element={<Page component={AuditLog} endpoint="/admin/audit" title="Audit log" subtitle="Every sensitive action on the platform." />} />
         <Route path="voice" element={<Page component={Voice} />} />
         <Route path="whatsapp-api" element={<Page component={WhatsAppApi} />} />
+        <Route path="cutting" element={<Page component={Cutting} />} />
         <Route path="settings" element={<Page component={Settings} />} />
         <Route path="profile" element={<Page component={Profile} />} />
       </Route>

@@ -30,10 +30,8 @@ async function request(record, message) {
       signal: AbortSignal.timeout(20000),
     });
   } catch (err) {
-    const timedOut = err.name === 'TimeoutError';
-    throw providerError(`Could not reach the WhatsApp vendor API: ${waApi.maskSecret(err.message, req.apiKey)}`, {
-      retryable: timedOut,
-      code: timedOut ? 'WA_HTTP_TIMEOUT' : 'WA_HTTP_NETWORK',
+    throw providerError(`Could not reach the WhatsApp vendor API; provider outcome is unknown: ${waApi.maskSecret(err.message, req.apiKey)}`, {
+      code: err.name === 'TimeoutError' ? 'WA_HTTP_TIMEOUT' : 'WA_HTTP_NETWORK',
     });
   }
 
@@ -49,8 +47,8 @@ async function request(record, message) {
   if (!response.ok) {
     const reason = json && (json.message || json.error || json.msg);
     const detail = typeof reason === 'string' ? waApi.maskSecret(reason, req.apiKey) : text;
-    const err = providerError(`WhatsApp vendor API returned HTTP ${response.status}${detail ? `: ${waApi.maskSecret(detail, req.apiKey).slice(0, 500)}` : ''}`, {
-      retryable: response.status >= 500,
+    const ambiguous = response.status >= 500;
+    const err = providerError(`${ambiguous ? 'Provider outcome is unknown: ' : ''}WhatsApp vendor API returned HTTP ${response.status}${detail ? `: ${waApi.maskSecret(detail, req.apiKey).slice(0, 500)}` : ''}`, {
       code: response.status,
       status: response.status,
     });
@@ -96,6 +94,11 @@ const provider = {
 
   canSend(account) {
     return Date.now() >= (nextSendAt.get(String(account.ownerId)) || 0);
+  },
+
+  getNextSendAt(account) {
+    const next = nextSendAt.get(String(account.ownerId)) || 0;
+    return next > Date.now() ? new Date(next) : null;
   },
 
   scheduleNext(account, delayMs) {

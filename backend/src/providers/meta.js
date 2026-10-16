@@ -39,13 +39,13 @@ async function graph(url, token, { method = 'GET', body } = {}) {
       signal: AbortSignal.timeout(15000),
     });
   } catch (err) {
-    throw new ProviderError(`Could not reach the WhatsApp Cloud API: ${err.message}`, { retryable: true, code: 'NETWORK' });
+    throw new ProviderError(`Could not reach Meta; request outcome is unknown: ${err.message}`, { code: 'NETWORK' });
   }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const e = json && json.error ? json.error : {};
-    throw new ProviderError(e.message || `WhatsApp Cloud API returned HTTP ${res.status}`, {
-      retryable: res.status >= 500 || res.status === 429,
+    const ambiguous = res.status >= 500;
+    throw new ProviderError(`${ambiguous ? 'Provider outcome is unknown: ' : ''}${e.message || `WhatsApp Cloud API returned HTTP ${res.status}`}`, {
       code: e.code || res.status,
       status: res.status,
     });
@@ -73,7 +73,7 @@ async function uploadExampleHandle(account, token, media) {
       signal: AbortSignal.timeout(60000),
     });
   } catch (err) {
-    throw new ProviderError(`Could not upload the sample file to Meta: ${err.message}`, { retryable: true, code: 'NETWORK' });
+    throw new ProviderError(`Could not reach Meta while uploading the sample file: ${err.message}`, { retryable: true, code: 'NETWORK' });
   }
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.h) throw new ProviderError((json.error && json.error.message) || 'Meta rejected the sample file upload', { code: res.status });

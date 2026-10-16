@@ -219,6 +219,11 @@ function canSend(ownerId) {
   return !st || Date.now() >= st.nextSendAt;
 }
 
+function getNextSendAt(ownerId) {
+  const nextSendAt = (sessions.get(key(ownerId)) || {}).nextSendAt || 0;
+  return nextSendAt > Date.now() ? new Date(nextSendAt) : null;
+}
+
 function scheduleNext(ownerId, minMs, maxMs) {
   const st = sessions.get(key(ownerId));
   if (st) st.nextSendAt = Date.now() + minMs + Math.random() * Math.max(0, maxMs - minMs);
@@ -245,4 +250,4 @@ async function stopAll() {
   for (const id of [...sessions.keys()]) await stop(id, { keepFiles: true });
 }
 
-module.exports = { start, stop, logout, getState, hasSavedSession, sendMessage, canSend, scheduleNext, resumeAll, stopAll };
+module.exports = { start, stop, logout, getState, hasSavedSession, sendMessage, canSend, getNextSendAt, scheduleNext, resumeAll, stopAll };

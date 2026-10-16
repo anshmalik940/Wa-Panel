@@ -13,6 +13,7 @@ const { listLedger } = require('../../services/credits');
 const { getSettings } = require('../../utils/settings');
 const { config } = require('../../config');
 const { resolveWhatsApp } = require('../../services/providerResolver');
+const { currentCutting } = require('../../services/cutting');
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ router.get(
   ah(async (req, res) => {
     const ownerId = req.user._id;
     const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
-    const [total, valid, invalid, optedOut, tplRows, campRows, archivedCampRows, recent, msgBy, archivedMsgRows, usage, whatsapp] = await Promise.all([
+    const [total, valid, invalid, optedOut, tplRows, campRows, archivedCampRows, recent, msgBy, archivedMsgRows, usage, whatsapp, cutting] = await Promise.all([
       Contact.countDocuments({ ownerId }),
       Contact.countDocuments({ ownerId, phoneValid: true, optedOut: false }),
       Contact.countDocuments({ ownerId, phoneValid: false }),
@@ -30,15 +31,16 @@ router.get(
       Campaign.aggregate([{ $match: { ownerId } }, { $group: { _id: '$status', n: { $sum: 1 } } }]),
       CampaignArchive.aggregate([{ $match: { ownerId } }, { $group: { _id: '$status', n: { $sum: 1 } } }]),
       Campaign.find({ ownerId }).sort({ createdAt: -1 }).limit(5),
-      statusCounts({ ownerId, createdAt: { $gte: since } }),
+      statusCounts({ ownerId, simulated: false, createdAt: { $gte: since } }),
       CampaignArchive.aggregate([
-        { $match: { ownerId, 'messageBuckets.at': { $gte: since } } },
+        { $match: { ownerId, 'messageBuckets.at': { $gte: since }, 'messageBuckets.status': { $not: /^simulated_/ } } },
         { $unwind: '$messageBuckets' },
-        { $match: { 'messageBuckets.at': { $gte: since } } },
+        { $match: { 'messageBuckets.at': { $gte: since }, 'messageBuckets.status': { $not: /^simulated_/ } } },
         { $group: { _id: '$messageBuckets.status', n: { $sum: '$messageBuckets.count' } } },
       ]),
       getUsage(ownerId),
       resolveWhatsApp(req.user),
+      currentCutting(ownerId),
     ]);
     const toMap = (rows) => Object.fromEntries(rows.map((r) => [r._id, r.n]));
     const campaignCounts = toMap(campRows);
@@ -47,7 +49,7 @@ router.get(
     for (const row of archivedMsgRows) messageCounts[row._id] = (messageCounts[row._id] || 0) + row.n;
     const recentRows = recent.length
       ? await CampaignMessage.aggregate([
-        { $match: { campaignId: { $in: recent.map((campaign) => campaign._id) } } },
+        { $match: { campaignId: { $in: recent.map((campaign) => campaign._id) }, simulated: false } },
         { $group: { _id: { campaignId: '$campaignId', status: '$status' }, n: { $sum: 1 } } },
       ])
       : [];
@@ -62,15 +64,16 @@ router.get(
       contacts: { total, valid, invalid, optedOut },
       templates: toMap(tplRows),
       campaigns: campaignCounts,
-      messagesLast30Days: { recipients: f.recipients, sent: f.sent, delivered: f.delivered, read: f.read, failed: f.failed, excluded: f.excluded, queued: f.queued },
+      messagesLast30Days: { recipients: f.recipients, sent: f.sent, delivered: f.delivered, read: f.read, failed: f.failed, unknown: f.unknown, excluded: f.excluded, queued: f.queued },
       usage: { ...usage, limit: limitsOf(req.user).messages, remaining: Math.max(0, limitsOf(req.user).messages - usage.messages) },
       credits: req.user.credits || 0,
+      cutting,
       whatsapp: {
         status: whatsapp.ready ? 'connected' : 'not_connected',
         provider: whatsapp.providerName,
         source: whatsapp.source,
       },
-      recentCampaigns: recent.map((c, i) => ({ id: c._id, name: c.name, status: c.status, createdAt: c.createdAt, provider: c.provider, sent: recentStats[i].sent, recipients: recentStats[i].recipients, failed: recentStats[i].failed })),
+      recentCampaigns: recent.map((c, i) => ({ id: c._id, name: c.name, status: c.status, createdAt: c.createdAt, provider: c.provider, sent: recentStats[i].sent, recipients: recentStats[i].recipients, failed: recentStats[i].failed, unknown: recentStats[i].unknown })),
     });
   }),
 );
@@ -108,6 +111,8 @@ router.get(
         used: selected.messages,
         sent: selected.messagesSent,
         failed: selected.messagesFailed,
+        unknown: selected.messagesUnknown,
+        cut: selected.messagesCut,
         simulated: selected.simulatedMessages,
         limit,
         remaining: limit > 0 ? Math.max(0, limit - selected.messages) : 0,
@@ -128,7 +133,7 @@ router.get(
     const pp = pageParams(req.query, { defLimit: 20 });
     const { rows, total } = await listLedger(req.user._id, { page: pp.page, limit: pp.limit });
     const settings = await getSettings();
-    res.json({ balance: req.user.credits || 0, costs: { message: settings.creditsPerMessage, call: settings.creditsPerCall }, ...pageResult(rows, total, pp) });
+    res.json({ balance: req.user.credits || 0, costs: { message: settings.creditsPerMessage, call: settings.creditsPerCall }, cutting: await currentCutting(req.user._id), ...pageResult(rows, total, pp) });
   }),
 );
 

@@ -13,6 +13,7 @@ module.exports = {
   AuditLog: require('./AuditLog'),
   Setting: require('./Setting'),
   CreditTransaction: require('./CreditTransaction'),
+  CampaignCutting: require('./CampaignCutting'),
   Media: require('./Media'),
   VoiceConfig: require('./VoiceConfig'),
   WhatsappApiConfig: require('./WhatsappApiConfig'),

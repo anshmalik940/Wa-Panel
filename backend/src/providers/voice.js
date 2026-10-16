@@ -68,7 +68,7 @@ async function callVendor(cfg, values) {
   try {
     res = await global.fetch(req.url, { method: req.method, headers: req.headers, body: req.body, signal: AbortSignal.timeout(15000) });
   } catch (err) {
-    throw new ProviderError(`Could not reach the voice API: ${err.message}`, { retryable: true, code: 'NETWORK' });
+    throw new ProviderError(`Could not reach the voice API; call acceptance is unknown: ${err.message}`, { code: 'NETWORK' });
   }
   const text = await res.text();
   let json = null;
@@ -77,8 +77,8 @@ async function callVendor(cfg, values) {
   } catch { /* vendor answered with plain text */ }
   if (!res.ok) {
     const reason = (json && (json.message || json.error || json.msg)) || text.slice(0, 200) || `HTTP ${res.status}`;
-    throw new ProviderError(`Voice API refused the call: ${typeof reason === 'string' ? reason : JSON.stringify(reason).slice(0, 200)}`, {
-      retryable: res.status >= 500 || res.status === 429,
+    const ambiguous = res.status >= 500;
+    throw new ProviderError(`${ambiguous ? 'Call acceptance is unknown: ' : 'Voice API refused the call: '}${typeof reason === 'string' ? reason : JSON.stringify(reason).slice(0, 200)}`, {
       code: res.status,
       status: res.status,
     });

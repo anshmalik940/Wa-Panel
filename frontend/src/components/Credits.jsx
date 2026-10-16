@@ -45,6 +45,7 @@ export function LedgerTable({ ledger, campaignLinks = false }) {
       className: 'nowrap',
       render: (t) => <strong style={{ color: t.type === 'credit' ? 'var(--ok)' : 'var(--danger)' }}>{t.type === 'credit' ? '+' : '−'}{fmtNumber(t.amount)}</strong>,
     },
+    { key: 'gross', header: 'Campaign charge', render: (t) => (t.reason === 'campaign' ? fmtNumber(t.originalAmount || 0) : '—') },
     { key: 'bal', header: 'Balance after', render: (t) => fmtNumber(t.balanceAfter) },
     {
       key: 'note',

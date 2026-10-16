@@ -14,6 +14,9 @@ const DEFAULTS = {
   qrDelayMinMs: 3000,
   qrDelayMaxMs: 8000,
   waHttpDelayMs: 1000,
+  campaignBatchSize: 5,
+  campaignBatchDelayMs: 1000,
+  campaignFailurePauseThreshold: 5,
   finishedCampaignRetentionLimit: 10,
   allowQrForNewUsers: false,
 };
@@ -32,6 +35,9 @@ const updateSchema = z
     qrDelayMinMs: z.coerce.number().int().min(500).max(600000),
     qrDelayMaxMs: z.coerce.number().int().min(500).max(600000),
     waHttpDelayMs: z.coerce.number().int().min(500).max(600000),
+    campaignBatchSize: z.coerce.number().int().min(1).max(50),
+    campaignBatchDelayMs: z.coerce.number().int().min(0).max(600000),
+    campaignFailurePauseThreshold: z.coerce.number().int().min(1).max(50),
     finishedCampaignRetentionLimit: z.coerce.number().int().min(1).max(1000),
     allowQrForNewUsers: z.coerce.boolean(),
   })

@@ -4,7 +4,7 @@ import { useAuth } from '../../auth.jsx';
 import { useApi, useDocumentTitle, useForm } from '../../hooks.js';
 import { Alert, Button, Card, ErrorState, Field, PageHeader, Spinner, useToast } from '../../components/ui.jsx';
 
-const NUM_KEYS = ['defaultMonthlyMessageLimit', 'defaultContactLimit', 'mockFailureRate', 'mockDeliveryDelayMs', 'mockReadDelayMs', 'creditsPerMessage', 'creditsPerCall', 'qrDelayMinMs', 'qrDelayMaxMs', 'waHttpDelayMs', 'finishedCampaignRetentionLimit'];
+const NUM_KEYS = ['defaultMonthlyMessageLimit', 'defaultContactLimit', 'mockFailureRate', 'mockDeliveryDelayMs', 'mockReadDelayMs', 'creditsPerMessage', 'creditsPerCall', 'qrDelayMinMs', 'qrDelayMaxMs', 'waHttpDelayMs', 'campaignBatchSize', 'campaignBatchDelayMs', 'campaignFailurePauseThreshold', 'finishedCampaignRetentionLimit'];
 
 function SettingsForm({ settings, env, onSaved }) {
   const toast = useToast();
@@ -21,9 +21,12 @@ function SettingsForm({ settings, env, onSaved }) {
     for (const k of NUM_KEYS) if (!/^\d+(\.\d+)?$/.test(String(v[k]).trim())) errs[k] = 'Enter a number (0 or more)';
     if (!errs.mockFailureRate && Number(v.mockFailureRate) > 100) errs.mockFailureRate = 'Must be between 0 and 100';
     for (const k of ['creditsPerMessage', 'creditsPerCall']) if (!errs[k] && !Number.isInteger(Number(v[k]))) errs[k] = 'Enter a whole number';
+    for (const k of ['campaignBatchSize', 'campaignBatchDelayMs', 'campaignFailurePauseThreshold']) if (!errs[k] && !Number.isInteger(Number(v[k]))) errs[k] = 'Enter a whole number';
     for (const k of ['qrDelayMinMs', 'qrDelayMaxMs']) if (!errs[k] && Number(v[k]) < 500) errs[k] = 'At least 500 ms';
     if (!errs.qrDelayMinMs && !errs.qrDelayMaxMs && Number(v.qrDelayMaxMs) < Number(v.qrDelayMinMs)) errs.qrDelayMaxMs = 'Must be at least the minimum delay';
     if (!errs.waHttpDelayMs && Number(v.waHttpDelayMs) < 500) errs.waHttpDelayMs = 'At least 500 ms';
+    if (!errs.campaignBatchSize && (Number(v.campaignBatchSize) < 1 || Number(v.campaignBatchSize) > 50)) errs.campaignBatchSize = 'Must be between 1 and 50';
+    if (!errs.campaignFailurePauseThreshold && (Number(v.campaignFailurePauseThreshold) < 1 || Number(v.campaignFailurePauseThreshold) > 50)) errs.campaignFailurePauseThreshold = 'Must be between 1 and 50';
     if (!errs.finishedCampaignRetentionLimit && Number(v.finishedCampaignRetentionLimit) < 1) errs.finishedCampaignRetentionLimit = 'Keep at least one finished campaign';
     form.setErrors(errs);
     if (Object.keys(errs).length) return;
@@ -103,6 +106,18 @@ function SettingsForm({ settings, env, onSaved }) {
             <input inputMode="numeric" {...form.bind('waHttpDelayMs')} />
           </Field>
         </Card>
+        <Card title="Campaign queue safety">
+          <p className="muted small">Controls the number of messages a worker may process before yielding and the pause between batches. QR-linked phones and vendor APIs continue to use their own per-message pacing. These limits are operational safeguards, not a guarantee against provider restrictions.</p>
+          <Field label="Maximum messages per worker batch" error={form.errors.campaignBatchSize}>
+            <input inputMode="numeric" {...form.bind('campaignBatchSize')} min="1" max="50" />
+          </Field>
+          <Field label="Pause between worker batches (ms)" error={form.errors.campaignBatchDelayMs}>
+            <input inputMode="numeric" {...form.bind('campaignBatchDelayMs')} min="0" max="600000" />
+          </Field>
+          <Field label="Consecutive failures before automatic pause" error={form.errors.campaignFailurePauseThreshold}>
+            <input inputMode="numeric" {...form.bind('campaignFailurePauseThreshold')} min="1" max="50" />
+          </Field>
+        </Card>
         <Card title="Campaign history">
           <p className="muted small">Finished campaigns beyond this per-account limit, including their recipient rows, are automatically removed. Draft and in-progress campaigns are never removed.</p>
           <Field label="Latest finished campaigns kept" error={form.errors.finishedCampaignRetentionLimit}>
@@ -113,6 +128,8 @@ function SettingsForm({ settings, env, onSaved }) {
           <dl className="kv">
             <dt>Real sending (WhatsApp and calls)</dt>
             <dd>{env.allowRealSend ? 'Enabled (ALLOW_REAL_SEND=true)' : 'Disabled — only the mock providers run'}</dd>
+            <dt>Mock campaign reports</dt>
+            <dd>{env.allowMockCampaigns ? 'Enabled for this non-production/demo environment' : 'Disabled (production default)'}</dd>
             <dt>Default country code</dt>
             <dd>+{env.defaultCountryCode}</dd>
             <dt>Usage timezone</dt>

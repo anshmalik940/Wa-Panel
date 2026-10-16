@@ -54,13 +54,20 @@ export default function Dashboard() {
         <Stat label="Approved templates" value={fmtNumber(d.templates.approved || 0)} sub={`${(d.templates.draft || 0) + (d.templates.pending || 0)} draft / pending`} />
         <Stat label="Campaigns" value={fmtNumber(Object.values(d.campaigns).reduce((a, b) => a + b, 0))} sub={`${running} running · ${d.campaigns.scheduled || 0} scheduled`} />
       </div>
+      {d.cutting ? (
+        <Alert tone={d.cutting.eligible ? 'info' : 'warn'} title={d.cutting.eligible ? `Your ${d.cutting.percentage}% campaign cutting rule is active` : `Your ${d.cutting.percentage}% cutting rule is not currently eligible`}>
+          {d.cutting.eligible ? 'The configured share of eligible recipients may be randomly cut and charged at full campaign rates.' : ''}
+          {!d.cutting.eligible && new Date(d.cutting.startsAt) > new Date() ? ` Starts ${fmtDate(d.cutting.startsAt)}.` : d.cutting.expiresAt ? ` Expires ${fmtDate(d.cutting.expiresAt)}.` : ''}
+          {' '}Cut recipients are clearly labelled separately from messages actually sent or delivered. See <Link to="/app/credits">credit history</Link>.
+        </Alert>
+      ) : null}
       <div className="grid grid-2 mb">
         <Card title="Messages (last 30 days)">
           {d.messagesLast30Days.recipients ? (
             <>
               <Funnel stats={d.messagesLast30Days} />
               <p className="muted small mt">
-                {fmtNumber(d.messagesLast30Days.excluded)} recipients were excluded (opted out, invalid number or missing data). Simulated results are labelled as such in each campaign report.
+                {fmtNumber(d.messagesLast30Days.excluded)} recipients were excluded (opted out, invalid number or missing data). {fmtNumber(d.messagesLast30Days.unknown || 0)} provider outcomes are unknown and are shown separately, not as delivered. Simulated results are labelled as such in each campaign report.
               </p>
             </>
           ) : (
@@ -92,6 +99,7 @@ export default function Dashboard() {
                   <th>Status</th>
                   <th>Sent / recipients</th>
                   <th>Failed</th>
+                  <th>Unknown</th>
                   <th>Created</th>
                 </tr>
               </thead>
@@ -110,6 +118,7 @@ export default function Dashboard() {
                       {fmtNumber(c.sent)} / {fmtNumber(c.recipients)}
                     </td>
                     <td data-label="Failed">{fmtNumber(c.failed)}</td>
+                    <td data-label="Unknown">{fmtNumber(c.unknown || 0)}</td>
                     <td data-label="Created">{fmtDate(c.createdAt)}</td>
                   </tr>
                 ))}

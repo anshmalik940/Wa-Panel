@@ -20,7 +20,11 @@ List endpoints accept `page`, `limit`, `q`/filters and return pagination metadat
 |---|---|---|
 | GET | /stats | platform stats from DB |
 | GET | /audit | global audit log |
-| GET/PUT | /settings | default limits, mock failure rate, mock delays, QR and Company API pacing |
+| GET/PUT | /settings | default limits, mock failure rate, mock delays, QR and Company API pacing, campaign batch size/delay, and automatic safety-pause threshold |
+| GET | /cutting | search customers/resellers with their campaign cutting rule |
+| PUT | /cutting/:userId | assign/update percentage, start/expiry, active state, internal reason |
+| POST | /cutting/:userId/revoke | revoke cutting for future campaigns |
+| GET | /cutting/:userId/history | administrator changes and applied-cut audit history |
 | GET/PUT | /wa-api | platform-wide Company WhatsApp API configuration; API keys are encrypted and only `hasApiKey` is returned |
 | POST | /wa-api/preset/wtap | load sms4power (wtap) defaults without changing the saved key |
 | POST | /wa-api/test | send one real test message; requires `ALLOW_REAL_SEND=true`, returns vendor status/body with API-key values masked |
@@ -45,13 +49,14 @@ List endpoints accept `page`, `limit`, `q`/filters and return pagination metadat
 | WhatsApp `/whatsapp` | GET /, PUT / (provider `mock`/`meta`/`qr`/`wa_http`; customer credentials never include the platform API key), POST /connect, POST /disconnect, GET /events, **QR (linked phone):** GET /qr (state + QR image), POST /qr/start, POST /qr/logout |
 | Media `/media` | GET / (filter by kind), POST / (multipart; type detected from file bytes; image 5 MB, video/document/audio 16 MB), DELETE /:id (refused while in use) |
 | Voice `/voice` | GET / (campaign list + usable CLI numbers), POST /campaigns, PATCH /campaigns/:id (start/pause/resume/cancel/schedule use the normal `/campaigns/:id/...` actions) |
-| Credits | GET /credits (balance, per-message and per-call cost, ledger) |
+| Credits | GET /credits (balance, per-message and per-call cost, current cutting eligibility, ledger with campaign charges) |
 
 Templates accept the existing `headerType`, `header`, and `mediaId` fields. `attachmentType` (`none`, `image`, `video`, or `document`) is optional for compatibility; when absent, old `headerType=image|video|document` values continue to identify the attachment. An empty `body` is valid only with an image, video, or document attachment. Meta submissions require body text and cannot combine a text header with a media header.
 
 Campaign statuses: `draft → scheduled → queued → running ⇄ paused → completed | cancelled | failed`.
 Message statuses in mock mode: `queued, sending, simulated_sent, simulated_delivered, simulated_read, simulated_failed, excluded, cancelled`
-(plain `sent/delivered/read/failed` are used only with a real provider).
+(plain `sent/delivered/read/failed/unknown/cut` are used only with a real provider).
+Eligible real campaign recipients are charged at the configured per-message/per-call rate, including recipients selected for cutting. The configured percentage is snapshotted at campaign start and a rounded random sample of eligible recipients is marked internally as `cut` (shown as `Cutting off` in reports/exports) and never submitted to the provider. This state is separate from sent, delivered, failed, and cancelled. Real charges for submitted messages/calls are recorded on provider submission/acceptance; explicit provider rejections are refunded. Ambiguous timeouts/5xx responses retain the debit and pause without retry, because the provider may have accepted the request. Delivery/read receipts update actual message status independently and do not change the billing event.
 
 ## Webhooks — `/webhooks/whatsapp` (public, signature-protected)
 `GET` verification handshake (`hub.mode`, `hub.verify_token`, `hub.challenge`);
@@ -59,7 +64,7 @@ Message statuses in mock mode: `queued, sending, simulated_sent, simulated_deliv
 inbound `STOP` opts the contact out.
 
 ## Database
-Mongoose models in `backend/src/models` (User, Contact, Template, Campaign, CampaignMessage, WhatsAppAccount, WhatsappApiConfig, WebhookEvent,
+Mongoose models in `backend/src/models` (User, Contact, Template, Campaign, CampaignMessage, CampaignCutting, WhatsAppAccount, WhatsappApiConfig, WebhookEvent,
 Usage, AuditLog, PasswordReset, Setting). Indexes (unique phone per tenant, one message per campaign+contact, unique campaign submission key, queue/lock indexes,
 unique webhook event id, unique reset-token hash) are declared in the schemas and built on startup.
 

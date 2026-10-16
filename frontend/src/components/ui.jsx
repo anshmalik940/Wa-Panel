@@ -257,6 +257,8 @@ export function Badge({ tone = 'neutral', children, title }) {
 const STATUS_TONE = {
   active: 'ok', connected: 'ok', approved: 'ok', completed: 'ok', valid: 'ok', applied: 'ok',
   suspended: 'danger', failed: 'danger', error: 'danger', rejected: 'danger', invalid: 'danger',
+  cut: 'warn',
+  unknown: 'warn',
   simulated_failed: 'danger', cancelled: 'neutral', excluded: 'neutral',
   paused: 'warn', pending: 'warn', scheduled: 'info', queued: 'info', sending: 'info', running: 'info',
   draft: 'neutral', not_configured: 'neutral', optedout: 'warn', opted_out: 'warn', ignored: 'neutral',
@@ -267,6 +269,8 @@ const STATUS_LABEL = {
   simulated_delivered: 'Delivered (simulated)',
   simulated_read: 'Read (simulated)',
   simulated_failed: 'Failed (simulated)',
+  unknown: 'Outcome unknown',
+  cut: 'Cutting off',
   not_configured: 'Not configured',
 };
 

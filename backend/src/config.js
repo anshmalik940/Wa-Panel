@@ -30,11 +30,12 @@ const schema = z.object({
   }, 'Must be a valid IANA timezone'),
   // Kill switch for REAL sending (Meta Cloud API / QR-linked phone / voice API). Mock provider is unaffected.
   ALLOW_REAL_SEND: boolTrue,
+  ALLOW_MOCK_CAMPAIGNS: z.enum(['true', 'false']).optional(),
   // Where uploaded media and linked-phone (QR) sessions are stored. Use a persistent disk in production.
   DATA_DIR: z.string().default(path.join(__dirname, '..', 'data')),
   WHATSAPP_GRAPH_VERSION: z.string().default('v21.0'),
   WORKER_ENABLED: boolTrue,
-  WORKER_INTERVAL_MS: z.coerce.number().int().min(100).default(1000),
+  WORKER_INTERVAL_MS: z.coerce.number().int().min(100).max(600000).default(1000),
   WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(20),
   RESET_TOKEN_TTL_MIN: z.coerce.number().int().min(5).default(30),
   // When true the password-reset link is returned in the API response (development only).
@@ -59,8 +60,11 @@ function loadConfig(env = process.env) {
   c.CLIENT_URL = c.CLIENT_URL ?? (c.NODE_ENV === 'production' ? '' : 'http://localhost:5173');
   c.PUBLIC_API_URL = c.PUBLIC_API_URL ?? (c.NODE_ENV === 'production' ? '' : 'http://localhost:5000');
   c.RESET_RETURN_LINK = c.RESET_RETURN_LINK ? c.RESET_RETURN_LINK === 'true' : c.NODE_ENV !== 'production';
+  c.ALLOW_MOCK_CAMPAIGNS = c.NODE_ENV !== 'production'
+    && (c.ALLOW_MOCK_CAMPAIGNS === undefined || c.ALLOW_MOCK_CAMPAIGNS === 'true');
   if (c.NODE_ENV === 'production') {
     const problems = [];
+    if (parsed.data.ALLOW_MOCK_CAMPAIGNS === 'true') problems.push('ALLOW_MOCK_CAMPAIGNS must be false in production');
     if (/change-me|example|secret-secret/i.test(c.JWT_SECRET)) problems.push('JWT_SECRET still looks like the example value');
     if (/change-me|example/i.test(c.ENCRYPTION_KEY)) problems.push('ENCRYPTION_KEY still looks like the example value');
     if (c.RESET_RETURN_LINK) problems.push('RESET_RETURN_LINK must be false in production');

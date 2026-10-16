@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { Campaign, CampaignMessage, User } = require('../models');
 const { config } = require('../config');
 const { getSettings } = require('../utils/settings');
@@ -11,9 +12,11 @@ const voiceSvc = require('./voiceService');
 const { resolveWhatsApp, NOT_READY } = require('./providerResolver');
 const { rememberLastRecipient } = require('./messageAttribution');
 const { cleanupOwner, cleanupAll } = require('./campaignRetention');
+const { appliedCutting } = require('./cutting');
 
 const MAX_ATTEMPTS = 3;
 const STALE_MS = Number(process.env.WORKER_STALE_MS) || 120000;
+const LEASE_MS = 120000;
 
 let timer = null;
 let busy = false;
@@ -28,25 +31,54 @@ async function recoverStale({ staleMs = STALE_MS } = {}) {
     { $set: { status: 'queued', error: 'Recovered after interrupted processing' } },
   );
   // A real send may or may not have reached the provider: never auto-retry (would risk a duplicate message).
-  const staleOwners = await CampaignMessage.aggregate([
-    { $match: { status: 'sending', simulated: false, lockedAt: { $lte: cutoff } } },
-    { $group: { _id: '$ownerId', count: { $sum: 1 } } },
-  ]);
-  let failedCount = 0;
-  for (const owner of staleOwners) {
-    const result = await CampaignMessage.updateMany(
-      { ownerId: owner._id, status: 'sending', simulated: false, lockedAt: { $lte: cutoff } },
-      { $set: { status: 'failed', failedAt: new Date(), error: 'Interrupted while sending; delivery outcome unknown and not retried to avoid a duplicate message' } },
+  const staleFilter = { status: 'sending', simulated: false, lockedAt: { $lte: cutoff } };
+  const unknownByOwner = new Map();
+  let unknownCount = 0;
+  const pausedCampaigns = new Set();
+  for await (const msg of CampaignMessage.find(staleFilter).select('_id ownerId campaignId billing').lean().cursor()) {
+    const updated = await CampaignMessage.updateOne(
+      { _id: msg._id, status: 'sending' },
+      {
+        $set: {
+          status: 'unknown',
+          unknownAt: new Date(),
+          error: 'Interrupted while sending; delivery outcome unknown and not retried to avoid a duplicate message',
+          ...(msg.billing ? { 'billing.deliveryUnknown': true } : {}),
+        },
+      },
     );
-    failedCount += result.modifiedCount;
-    if (result.modifiedCount) await incrementUsage(owner._id, { failed: result.modifiedCount });
+    if (!updated.modifiedCount) continue;
+    unknownCount += 1;
+    pausedCampaigns.add(String(msg.campaignId));
+    const ownerKey = String(msg.ownerId);
+    const owner = unknownByOwner.get(ownerKey) || { id: msg.ownerId, count: 0, campaignCounts: new Map() };
+    owner.count += 1;
+    owner.campaignCounts.set(String(msg.campaignId), (owner.campaignCounts.get(String(msg.campaignId)) || 0) + 1);
+    unknownByOwner.set(ownerKey, owner);
+  }
+  for (const owner of unknownByOwner.values()) {
+    const campaigns = await Campaign.find({ _id: { $in: [...owner.campaignCounts.keys()] } }).select('_id channel').lean();
+    let messages = 0;
+    let voiceCalls = 0;
+    for (const campaign of campaigns) {
+      const count = owner.campaignCounts.get(String(campaign._id)) || 0;
+      if (campaign.channel === 'voice') voiceCalls += count;
+      else messages += count;
+    }
+    await incrementUsage(owner.id, { messages, unknown: owner.count, voiceCalls });
+  }
+  if (pausedCampaigns.size) {
+    await Campaign.updateMany(
+      { _id: { $in: [...pausedCampaigns] }, status: 'running' },
+      { $set: { status: 'paused', pausedAt: new Date(), lastError: 'Paused because a provider outcome is unknown; uncertain messages are not retried.' } },
+    );
   }
   let resumed = 0;
   for (const c of await Campaign.find({ status: 'queued', startedAt: { $lte: cutoff } })) {
     await materialize(c);
     resumed += 1;
   }
-  return { requeued: requeued.modifiedCount, failed: failedCount, resumedCampaigns: resumed };
+  return { requeued: requeued.modifiedCount, unknown: unknownCount, resumedCampaigns: resumed };
 }
 
 async function runScheduler() {
@@ -67,61 +99,161 @@ async function runScheduler() {
 }
 
 async function pauseRunning(campaignId, reason) {
-  await Campaign.updateOne({ _id: campaignId, status: 'running' }, { $set: { status: 'paused', pausedAt: new Date(), lastError: reason } });
+  await Campaign.updateOne({ _id: campaignId, status: 'running' }, { $set: { status: 'paused', pausedAt: new Date(), lastError: reason, nextBatchAt: null } });
 }
 
-/** Returns 'ok' | 'no_credits'. Real (non-simulated) messages are paid for from the owner's wallet before sending. */
+const PAUSE_CODES = new Set(['190', '10', '368', '131031', '131048', '131056', 'QR_NOT_CONNECTED', 'QR_LOGGED_OUT', 'REAL_SEND_DISABLED']);
+
+function shouldPauseForProviderError(err) {
+  return err.status === 401
+    || err.status === 403
+    || err.status === 429
+    || isProviderOutcomeUnknown(err)
+    || PAUSE_CODES.has(String(err.code || ''))
+    || /logged out|account restricted|quality warning|quality limit/i.test(err.message || '');
+}
+
+function isProviderOutcomeUnknown(err) {
+  return err.status >= 500 || ['NETWORK', 'WA_HTTP_TIMEOUT', 'WA_HTTP_NETWORK'].includes(String(err.code || ''));
+}
+
+/** Real sends are debited before provider submission and refunded when the provider rejects them. */
 async function processMessage(campaign, resolved, msg, settings, voiceConfig = null) {
   const provider = campaign.channel === 'voice' ? getProvider(campaign.provider) : resolved.provider;
   const account = campaign.channel === 'voice' ? null : resolved.account;
   const unit = campaign.channel === 'voice' ? settings.creditsPerCall : settings.creditsPerMessage;
-  const cost = msg.simulated ? 0 : unit * (provider.costUnits ? provider.costUnits(msg, settings) : 1);
-  if (cost && !(await credits.charge(msg.ownerId, cost, campaign._id))) {
-    await CampaignMessage.updateOne({ _id: msg._id, status: 'sending' }, { $set: { status: 'queued', error: 'Waiting for credits' }, $inc: { attempts: -1 } });
+  const originalCharge = msg.simulated ? 0 : unit * (provider.costUnits ? provider.costUnits(msg, settings) : 1);
+  const billing = msg.simulated ? null : {
+    originalCharge,
+    finalCharge: originalCharge,
+    appliedAt: new Date(),
+    refunded: false,
+    deliveryUnknown: false,
+  };
+  const cost = billing ? billing.finalCharge : 0;
+  if (billing) {
+    await CampaignMessage.updateOne({ _id: msg._id, status: 'sending' }, { $set: { billing } });
+    msg.billing = billing;
+  }
+  if (billing && !(await credits.charge(msg.ownerId, cost, campaign._id, billing))) {
+    await CampaignMessage.updateOne(
+      { _id: msg._id, status: 'sending' },
+      { $set: { status: 'queued', error: 'Waiting for credits' }, $unset: { billing: 1 }, $inc: { attempts: -1 } },
+    );
     return 'no_credits';
   }
-  try {
-    const result = await provider.send({ account, message: msg, campaign, settings, voiceConfig });
-    const sentAt = new Date();
+  if (msg.isCut) {
+    const cutAt = new Date();
     const updated = await CampaignMessage.updateOne(
       { _id: msg._id, status: 'sending' },
-      { $set: { status: msg.simulated ? 'simulated_sent' : 'sent', providerMessageId: result.providerMessageId, sentAt, error: '' } },
+      { $set: { status: 'cut', cutAt, billing } },
     );
-    if (updated.modifiedCount && campaign.channel !== 'voice' && !msg.simulated) {
-      await rememberLastRecipient({ phone: msg.phone, ownerId: msg.ownerId, contactId: msg.contactId, campaignId: campaign._id, sentAt });
+    if (updated.modifiedCount) {
+      await incrementUsage(msg.ownerId, {
+        messages: campaign.channel === 'voice' ? 0 : 1,
+        cut: 1,
+        voiceCalls: campaign.channel === 'voice' ? 1 : 0,
+      });
+      await appliedCutting(campaign, msg, cutAt);
     }
-    await incrementUsage(msg.ownerId, {
-      messages: 1,
-      simulated: msg.simulated ? 1 : 0,
-      sent: msg.simulated ? 0 : 1,
-      voiceCalls: campaign.channel === 'voice' ? 1 : 0,
-    });
     return 'ok';
+  }
+  let result;
+  try {
+    result = await provider.send({ account, message: msg, campaign, settings, voiceConfig });
   } catch (err) {
     const known = err instanceof ProviderError;
     if (!known) console.error('[queue] unexpected error while sending', String(msg._id), err);
-    const message = known ? err.message : `Internal error: ${err.message}`;
-    if (known && err.retryable && msg.attempts < MAX_ATTEMPTS) {
+    const outcomeUnknown = !msg.simulated && (!known || isProviderOutcomeUnknown(err));
+    const message = `${outcomeUnknown ? 'Provider outcome is unknown; the message will not be retried. ' : ''}${known ? err.message : `Internal error: ${err.message}`}`;
+    const pauseForProvider = outcomeUnknown || (known && shouldPauseForProviderError(err));
+    const retry = known && err.retryable && msg.attempts < MAX_ATTEMPTS && !pauseForProvider;
+    // Refund only when the provider explicitly rejected the request; uncertain outcomes stay charged and are never retried.
+    if (!outcomeUnknown && (cost || (billing && billing.originalCharge > 0))) {
+      await credits.refund(msg.ownerId, cost, campaign._id, billing);
+      if (billing) {
+        billing.refunded = true;
+        await CampaignMessage.updateOne({ _id: msg._id }, { $set: { billing } });
+      }
+    } else if (outcomeUnknown && billing) {
+      billing.deliveryUnknown = true;
+      await CampaignMessage.updateOne({ _id: msg._id }, { $set: { billing } });
+    }
+    if (retry) {
       await CampaignMessage.updateOne({ _id: msg._id, status: 'sending' }, { $set: { status: 'queued', error: message } });
     } else {
       await CampaignMessage.updateOne(
         { _id: msg._id, status: 'sending' },
-        { $set: { status: msg.simulated ? 'simulated_failed' : 'failed', failedAt: new Date(), error: message } },
+        { $set: { status: msg.simulated ? 'simulated_failed' : outcomeUnknown ? 'unknown' : 'failed', ...(outcomeUnknown ? { unknownAt: new Date() } : { failedAt: new Date() }), error: message } },
       );
-      await incrementUsage(msg.ownerId, { failed: 1 });
+      if (outcomeUnknown) {
+        await incrementUsage(msg.ownerId, { messages: campaign.channel === 'voice' ? 0 : 1, unknown: 1, voiceCalls: campaign.channel === 'voice' ? 1 : 0 });
+      } else {
+        await incrementUsage(msg.ownerId, { failed: 1 });
+      }
     }
-    // a message that did not go out is not paid for
-    if (cost) await credits.refund(msg.ownerId, cost, campaign._id);
+    const failures = await Campaign.findOneAndUpdate(
+      { _id: campaign._id },
+      { $inc: { consecutiveFailures: 1 } },
+      { new: true },
+    ).select('consecutiveFailures');
+    const pause = pauseForProvider || (failures && failures.consecutiveFailures >= settings.campaignFailurePauseThreshold);
+    if (pause) {
+      await pauseRunning(campaign._id, pauseForProvider ? `Provider safety stop (${String(err.code || err.status || 'provider_error')})` : 'Paused after repeated consecutive provider failures');
+      console.warn(JSON.stringify({ event: 'campaign.paused.safety', campaignId: String(campaign._id), code: String(err.code || err.status || 'provider_error') }));
+      return 'pause';
+    }
     return 'failed';
   }
+
+  const sentAt = new Date();
+  const updated = await CampaignMessage.updateOne(
+    { _id: msg._id, status: 'sending' },
+    { $set: { status: msg.simulated ? 'simulated_sent' : 'sent', providerMessageId: result.providerMessageId, sentAt, error: '' } },
+  );
+  if (updated.modifiedCount && campaign.channel !== 'voice' && !msg.simulated) {
+    await rememberLastRecipient({ phone: msg.phone, ownerId: msg.ownerId, contactId: msg.contactId, campaignId: campaign._id, sentAt });
+  }
+  await incrementUsage(msg.ownerId, {
+    messages: 1,
+    simulated: msg.simulated ? 1 : 0,
+    sent: msg.simulated ? 0 : 1,
+    voiceCalls: campaign.channel === 'voice' ? 1 : 0,
+  });
+  await Campaign.updateOne({ _id: campaign._id }, { $set: { consecutiveFailures: 0 } });
+  return 'ok';
 }
 
 async function processRunning(settings) {
-  const campaigns = await Campaign.find({ status: 'running' }).sort({ _id: 1 }).limit(50);
+  const now = new Date();
+  const campaigns = await Campaign.find({
+    status: 'running',
+    $and: [
+      { $or: [{ workerLeaseUntil: null }, { workerLeaseUntil: { $lte: now } }] },
+      { $or: [{ nextBatchAt: null }, { nextBatchAt: { $lte: now } }] },
+    ],
+  }).sort({ _id: 1 }).limit(50);
   const startAfter = campaigns.findIndex((campaign) => String(campaign._id) === lastPlatformQrCampaignId);
   if (startAfter >= 0 && campaigns.length > 1) campaigns.push(...campaigns.splice(0, startAfter + 1));
   let processed = 0;
-  for (const c of campaigns) {
+  for (const candidate of campaigns) {
+    const leaseToken = crypto.randomUUID();
+    const c = await Campaign.findOneAndUpdate(
+      {
+        _id: candidate._id,
+        status: 'running',
+        $and: [
+          { $or: [{ workerLeaseUntil: null }, { workerLeaseUntil: { $lte: new Date() } }] },
+          { $or: [{ nextBatchAt: null }, { nextBatchAt: { $lte: new Date() } }] },
+        ],
+      },
+      { $set: { workerLeaseToken: leaseToken, workerLeaseUntil: new Date(Date.now() + LEASE_MS) } },
+      { new: true },
+    );
+    if (!c) continue;
+    let batchProcessed = 0;
+    let provider = null;
+    try {
     const owner = await User.findById(c.ownerId).select('status allowQr useOwnQr');
     if (!owner || owner.status !== 'active') {
       await pauseRunning(c._id, 'Account suspended');
@@ -130,7 +262,6 @@ async function processRunning(settings) {
     let account = null;
     let resolved = null;
     let voiceConfig = null;
-    let provider;
     if (c.channel === 'voice') {
       voiceConfig = await voiceSvc.getConfig();
       if (!voiceSvc.isReady(voiceConfig).ok || voiceSvc.providerFor(voiceConfig) !== c.provider) {
@@ -153,11 +284,23 @@ async function processRunning(settings) {
       continue;
     }
     // linked-phone sending is deliberately slow: one message per random pause, never a burst
-    if (provider.paced && !provider.canSend(account)) continue;
-    const budget = provider.paced ? 1 : Math.min(config.WORKER_BATCH_SIZE, quota.remaining);
+    if (provider.paced && !provider.canSend(account)) {
+      const next = provider.getNextSendAt ? provider.getNextSendAt(account) : null;
+      await Campaign.updateOne(
+        { _id: c._id, status: 'running', workerLeaseToken: leaseToken },
+        { $set: { nextBatchAt: next } },
+      );
+      continue;
+    }
+    const budget = provider.paced ? 1 : Math.min(config.WORKER_BATCH_SIZE, settings.campaignBatchSize, quota.remaining);
     for (let i = 0; i < budget; i += 1) {
-      const state = await Campaign.findById(c._id).select('status');
-      if (!state || state.status !== 'running') break; // paused/cancelled mid-batch
+      const renewed = await Campaign.updateOne(
+        { _id: c._id, status: 'running', workerLeaseToken: leaseToken },
+        { $set: { workerLeaseUntil: new Date(Date.now() + LEASE_MS) } },
+      );
+      if (!renewed.modifiedCount) break;
+      const state = await Campaign.findById(c._id).select('status workerLeaseToken');
+      if (!state || state.status !== 'running' || state.workerLeaseToken !== leaseToken) break;
       const msg = await CampaignMessage.findOneAndUpdate(
         { campaignId: c._id, status: 'queued' },
         { $set: { status: 'sending', lockedAt: new Date() }, $inc: { attempts: 1 } },
@@ -173,6 +316,7 @@ async function processRunning(settings) {
         break;
       }
       const outcome = await processMessage(c, resolved, msg, settings, voiceConfig);
+      batchProcessed += 1;
       if (c.channel !== 'voice' && resolved.source === 'platform' && resolved.providerName === 'qr') {
         lastPlatformQrCampaignId = String(c._id);
       }
@@ -180,12 +324,24 @@ async function processRunning(settings) {
         await pauseRunning(c._id, 'Not enough credits. Add credits, then resume the campaign.');
         break;
       }
+      if (outcome === 'pause') break;
       processed += 1;
     }
     const pending = await CampaignMessage.countDocuments({ campaignId: c._id, status: { $in: ['queued', 'sending'] } });
     if (pending === 0) {
-      const done = await Campaign.updateOne({ _id: c._id, status: 'running' }, { $set: { status: 'completed', completedAt: new Date() } });
+      const done = await Campaign.updateOne({ _id: c._id, status: 'running', workerLeaseToken: leaseToken }, { $set: { status: 'completed', completedAt: new Date(), nextBatchAt: null } });
       if (done.modifiedCount) await cleanupOwner(c.ownerId);
+    } else if (!provider.paced && batchProcessed >= budget && settings.campaignBatchDelayMs > 0) {
+      await Campaign.updateOne(
+        { _id: c._id, status: 'running', workerLeaseToken: leaseToken },
+        { $set: { nextBatchAt: new Date(Date.now() + settings.campaignBatchDelayMs) } },
+      );
+    }
+    } finally {
+      await Campaign.updateOne(
+        { _id: c._id, workerLeaseToken: leaseToken },
+        { $set: { workerLeaseToken: '', workerLeaseUntil: null } },
+      );
     }
   }
   return processed;
@@ -239,4 +395,4 @@ function stopWorker() {
   timer = null;
 }
 
-module.exports = { tick, startWorker, stopWorker, recoverStale, advanceSimulated };
+module.exports = { tick, startWorker, stopWorker, recoverStale, advanceSimulated, shouldPauseForProviderError, isProviderOutcomeUnknown, processMessage };

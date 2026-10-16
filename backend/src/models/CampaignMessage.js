@@ -4,7 +4,7 @@ const { Schema } = mongoose;
 
 // "simulated_*" statuses are produced only by the mock provider. They are never real deliveries.
 const MESSAGE_STATUSES = [
-  'queued', 'sending', 'sent', 'delivered', 'read', 'failed',
+  'queued', 'sending', 'sent', 'delivered', 'read', 'failed', 'unknown', 'cut',
   'simulated_sent', 'simulated_delivered', 'simulated_read', 'simulated_failed',
   'excluded', 'cancelled',
 ];
@@ -21,6 +21,8 @@ const schema = new Schema(
     media: { type: Schema.Types.Mixed, default: null }, // { kind, url, name, mime } attached to this message
     status: { type: String, enum: MESSAGE_STATUSES, default: 'queued' },
     simulated: { type: Boolean, default: false },
+    isCut: { type: Boolean, default: false },
+    cuttingPercentage: { type: Number, default: 0, min: 0, max: 100 },
     mockWillRead: { type: Boolean, default: false },
     excludedReason: { type: String, default: '' },
     providerMessageId: { type: String, default: '' },
@@ -31,6 +33,16 @@ const schema = new Schema(
     deliveredAt: { type: Date, default: null },
     readAt: { type: Date, default: null },
     failedAt: { type: Date, default: null },
+    unknownAt: { type: Date, default: null },
+    cutAt: { type: Date, default: null },
+    billing: {
+      originalCharge: { type: Number, min: 0 },
+      finalCharge: { type: Number, min: 0 },
+      appliedAt: { type: Date, default: null },
+      refunded: { type: Boolean, default: false },
+      deliveryUnknown: { type: Boolean, default: false },
+      progressReserved: { type: Boolean, default: false },
+    },
   },
   { timestamps: true, minimize: false },
 );

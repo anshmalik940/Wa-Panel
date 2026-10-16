@@ -10,6 +10,7 @@ const voiceSvc = require('./voiceService');
 const waApiSvc = require('./waApiService');
 const { resolveWhatsApp, NOT_READY } = require('./providerResolver');
 const { cleanupOwner } = require('./campaignRetention');
+const { activeCutting, cutCountFor, seededRandom } = require('./cutting');
 
 const oid = (id) => new mongoose.Types.ObjectId(String(id));
 const MEDIA_TYPES = ['image', 'video', 'document'];
@@ -128,6 +129,9 @@ async function validateCampaign(campaign) {
   else if (template.status !== 'approved') add('template_not_approved', `Template "${template.name}" is ${template.status}. Only approved templates can be used in campaigns.`);
 
   const resolved = owner ? await resolveWhatsApp(owner) : null;
+  if (resolved && resolved.providerName === 'mock' && !config.ALLOW_MOCK_CAMPAIGNS) {
+    add('mock_provider_disabled', 'Mock campaigns are available only in development, test, or explicitly enabled demo environments.');
+  }
   if (!resolved || !resolved.ready) {
     add('whatsapp_not_connected', NOT_READY);
   } else if (resolved.providerName !== 'mock' && !config.ALLOW_REAL_SEND) {
@@ -182,9 +186,9 @@ async function validateCampaign(campaign) {
         const settings = await getSettings();
         const units = resolved.provider.costUnits ? resolved.provider.costUnits({ media: snapshot.media }, settings) : 1;
         const cost = settings.creditsPerMessage * units;
-        const need = summary.eligible * cost;
+        const need = cost * summary.eligible;
         if (need > (owner.credits || 0)) {
-          add('insufficient_credits', `This campaign needs ${need} credits (${summary.eligible} messages × ${cost}) but your wallet has ${owner.credits || 0}. Ask your ${owner.role === 'reseller' ? 'administrator' : 'reseller or administrator'} to add credits.`);
+          add('insufficient_credits', `This campaign needs ${need} credits for all ${summary.eligible} eligible recipients, including any cut recipients, but your wallet has ${owner.credits || 0}. Ask your ${owner.role === 'reseller' ? 'administrator' : 'reseller or administrator'} to add credits.`);
         }
       }
     }
@@ -222,6 +226,9 @@ async function validateVoiceCampaign(campaign) {
   if (!owner || owner.status !== 'active') add('account_suspended', 'Your account is suspended.');
 
   const cfg = await voiceSvc.getConfig();
+  if (cfg.mode === 'mock' && !config.ALLOW_MOCK_CAMPAIGNS) {
+    add('mock_provider_disabled', 'Mock campaigns are available only in development, test, or explicitly enabled demo environments.');
+  }
   const ready = voiceSvc.isReady(cfg);
   if (!ready.ok) add('voice_not_configured', `Voice calling is not configured: ${ready.problem} Ask your administrator.`);
   else if (cfg.mode === 'http' && !config.ALLOW_REAL_SEND) add('real_sending_disabled', 'Real calling is switched off on this server (ALLOW_REAL_SEND=false).');
@@ -244,8 +251,8 @@ async function validateVoiceCampaign(campaign) {
     if (summary.eligible > q.remaining) add('monthly_limit_exceeded', `This campaign needs ${summary.eligible} calls but only ${q.remaining} remain of your monthly limit (${q.limit}).`);
     if (cfg.mode === 'http') {
       const cost = (await getSettings()).creditsPerCall;
-      const need = summary.eligible * cost;
-      if (need > (owner.credits || 0)) add('insufficient_credits', `This campaign needs ${need} credits (${summary.eligible} calls × ${cost}) but your wallet has ${owner.credits || 0}. Ask your ${owner.role === 'reseller' ? 'administrator' : 'reseller or administrator'} to add credits.`);
+      const need = cost * summary.eligible;
+      if (need > (owner.credits || 0)) add('insufficient_credits', `This campaign needs ${need} credits for all ${summary.eligible} eligible calls, including any cut calls, but your wallet has ${owner.credits || 0}. Ask your ${owner.role === 'reseller' ? 'administrator' : 'reseller or administrator'} to add credits.`);
     }
   }
   return { ok: issues.length === 0, issues, summary };
@@ -260,6 +267,23 @@ async function validateVoiceCampaign(campaign) {
 async function materialize(campaign) {
   const snapshot = campaign.templateSnapshot;
   const simulated = ['mock', 'voice_mock'].includes(campaign.provider);
+  const cutTarget = simulated ? 0 : campaign.cutRecipientTarget || 0;
+  const selectedCutIds = new Set();
+  if (cutTarget > 0) {
+    const random = seededRandom(String(campaign._id));
+    let eligibleSeen = 0;
+    const reservoir = [];
+    for await (const contact of Contact.find(audienceQuery(campaign)).sort({ _id: 1 }).lean().cursor()) {
+      if (!evaluateRecipient(contact, snapshot, campaign.variableMap).ok) continue;
+      if (eligibleSeen < cutTarget) reservoir.push(String(contact._id));
+      else {
+        const candidate = Math.floor(random() * (eligibleSeen + 1));
+        if (candidate < cutTarget) reservoir[candidate] = String(contact._id);
+      }
+      eligibleSeen += 1;
+    }
+    for (const id of reservoir) selectedCutIds.add(id);
+  }
   let ops = [];
   const flush = async () => {
     if (ops.length) {
@@ -271,7 +295,15 @@ async function materialize(campaign) {
     const ev = evaluateRecipient(c, snapshot, campaign.variableMap);
     const doc = { campaignId: campaign._id, ownerId: campaign.ownerId, contactId: c._id, phone: c.phone, contactName: c.name, simulated };
     if (ev.ok) {
-      Object.assign(doc, { status: 'queued', text: ev.text, params: ev.params, media: snapshot.media || null, mockWillRead: simulated && Number(c.phone.slice(-1)) < 6 });
+      Object.assign(doc, {
+        status: 'queued',
+        isCut: selectedCutIds.has(String(c._id)),
+        cuttingPercentage: selectedCutIds.has(String(c._id)) ? campaign.cuttingPercentage : 0,
+        text: ev.text,
+        params: ev.params,
+        media: snapshot.media || null,
+        mockWillRead: simulated && Number(c.phone.slice(-1)) < 6,
+      });
     } else {
       Object.assign(doc, { status: 'excluded', excludedReason: ev.reason });
     }
@@ -306,6 +338,8 @@ async function startCampaign(campaign) {
     templateName = template.name;
     templateSnapshot = (await snapshotWithMedia(template)).snapshot;
   }
+  const cutting = ['mock', 'voice_mock'].includes(provider) ? null : await activeCutting(campaign.ownerId);
+  const cuttingPercentage = cutting ? cutting.percentage : 0;
 
   // Atomic state transition: only ONE concurrent caller can win this, so recipients are queued exactly once.
   const claimed = await Campaign.findOneAndUpdate(
@@ -317,6 +351,8 @@ async function startCampaign(campaign) {
         provider,
         templateName,
         templateSnapshot,
+        cuttingPercentage,
+        cutRecipientTarget: cutCountFor(report.summary.eligible, cuttingPercentage),
         lastError: '',
         pausedAt: null,
       },
@@ -382,7 +418,7 @@ async function resumeCampaign(id, ownerId) {
   if (queued > 0 && q.remaining <= 0) issues.push({ code: 'monthly_limit_exceeded', message: 'Monthly message limit reached. Ask your administrator/reseller to raise it.' });
   if (issues.length) throw new HttpError(422, 'Campaign cannot be resumed', { issues });
 
-  const next = queued > 0 ? { status: 'running', pausedAt: null, lastError: '' } : { status: 'completed', completedAt: new Date(), pausedAt: null, lastError: '' };
+  const next = queued > 0 ? { status: 'running', pausedAt: null, lastError: '', nextBatchAt: null } : { status: 'completed', completedAt: new Date(), pausedAt: null, lastError: '', nextBatchAt: null };
   const c = await Campaign.findOneAndUpdate({ _id: id, ownerId, status: 'paused' }, { $set: next }, { new: true });
   if (!c) throw new HttpError(409, 'Campaign state changed; refresh and try again.');
   if (c.status === 'completed') await cleanupOwner(ownerId);
@@ -428,6 +464,8 @@ function funnel(by) {
     delivered,
     read,
     failed,
+    unknown: n('unknown'),
+    cut: n('cut'),
     byStatus: by,
   };
 }
@@ -439,12 +477,15 @@ async function statusCounts(match) {
   return by;
 }
 
-async function getCampaignStats(campaignId) {
-  return funnel(await statusCounts({ campaignId: oid(campaignId) }));
+async function getCampaignStats(campaignId, simulated) {
+  const match = { campaignId: oid(campaignId) };
+  if (simulated !== undefined) match.simulated = simulated;
+  return funnel(await statusCounts(match));
 }
 
 async function getCampaignReport(campaign) {
-  const stats = await getCampaignStats(campaign._id);
+  const simulated = ['mock', 'voice_mock'].includes(campaign.provider);
+  const stats = await getCampaignStats(campaign._id, simulated);
   const breakdown = async (match, field) => {
     const rows = await CampaignMessage.aggregate([
       { $match: { campaignId: campaign._id, ...match } },
@@ -453,11 +494,24 @@ async function getCampaignReport(campaign) {
     ]);
     return rows.map((r) => ({ reason: r._id, count: r.n }));
   };
-  const [excludedReasons, failureReasons] = await Promise.all([
+  const [excludedReasons, failureReasons, unknownReasons, billingRows] = await Promise.all([
     breakdown({ status: 'excluded' }, 'excludedReason'),
     breakdown({ status: { $in: ['failed', 'simulated_failed'] } }, 'error'),
+    breakdown({ status: 'unknown' }, 'error'),
+    CampaignMessage.aggregate([
+      { $match: { campaignId: campaign._id, ownerId: campaign.ownerId, simulated: false, status: { $in: ['sent', 'delivered', 'read', 'failed', 'unknown', 'cut'] }, 'billing.originalCharge': { $gt: 0 }, 'billing.finalCharge': { $exists: true }, 'billing.refunded': { $ne: true } } },
+      { $group: { _id: null, messages: { $sum: 1 }, cutMessages: { $sum: { $cond: [{ $eq: ['$status', 'cut'] }, 1, 0] } }, originalCharge: { $sum: { $ifNull: ['$billing.originalCharge', 0] } }, finalCharge: { $sum: { $ifNull: ['$billing.finalCharge', 0] } } } },
+    ]),
   ]);
-  return { stats, excludedReasons, failureReasons, simulated: ['mock', 'voice_mock'].includes(campaign.provider) };
+  const totals = billingRows[0] || { messages: 0, cutMessages: 0, originalCharge: 0, finalCharge: 0 };
+  return {
+    stats,
+    excludedReasons,
+    failureReasons,
+    unknownReasons,
+    simulated,
+    billing: { messages: totals.messages, cutMessages: totals.cutMessages, originalCharge: totals.originalCharge, finalCharge: totals.finalCharge },
+  };
 }
 
 module.exports = {

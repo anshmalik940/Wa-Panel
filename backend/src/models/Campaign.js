@@ -30,11 +30,18 @@ const schema = new Schema(
     // client generated key: re-submitting the same form never creates a second campaign
     submissionKey: { type: String, required: true },
     recipientCount: { type: Number, default: 0 },
+    cuttingPercentage: { type: Number, default: 0, min: 0, max: 100 },
+    cutRecipientTarget: { type: Number, default: 0, min: 0 },
     startedAt: { type: Date, default: null },
     pausedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
     cancelledAt: { type: Date, default: null },
     lastError: { type: String, default: '' },
+    nextBatchAt: { type: Date, default: null },
+    workerLeaseToken: { type: String, default: '' },
+    workerLeaseUntil: { type: Date, default: null },
+    consecutiveFailures: { type: Number, default: 0, min: 0 },
+    billingProgress: { type: Schema.Types.Mixed, default: {} },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true, minimize: false },
@@ -44,6 +51,16 @@ schema.index({ ownerId: 1, submissionKey: 1 }, { unique: true });
 schema.index({ ownerId: 1, createdAt: -1 });
 schema.index({ ownerId: 1, status: 1, createdAt: -1 });
 schema.index({ status: 1, scheduledAt: 1 });
+schema.index({ status: 1, nextBatchAt: 1, workerLeaseUntil: 1 });
+
+schema.set('toJSON', {
+  transform: (doc, ret) => {
+    delete ret.workerLeaseToken;
+    delete ret.workerLeaseUntil;
+    delete ret.__v;
+    return ret;
+  },
+});
 
 module.exports = mongoose.model('Campaign', schema);
 module.exports.CAMPAIGN_STATUSES = CAMPAIGN_STATUSES;

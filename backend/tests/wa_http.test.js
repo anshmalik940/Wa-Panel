@@ -165,7 +165,7 @@ describe('Company WhatsApp HTTP provider request handling', () => {
     reply = { status: 503, body: 'temporary outage' };
     await assert.rejects(
       provider.testSend(record(), { phone: '+919876543210', text: 'test', media: null }),
-      (err) => err.status === 503 && err.retryable,
+      (err) => err.status === 503 && !err.retryable && /outcome is unknown/i.test(err.message),
     );
 
     reply = { status: 200, body: '{"ok":"no"}' };
@@ -175,7 +175,7 @@ describe('Company WhatsApp HTTP provider request handling', () => {
     );
   });
 
-  test('network timeouts are retryable and have the API key masked', async () => {
+  test('network timeouts are not retried and have the API key masked', async () => {
     const originalFetch = global.fetch;
     try {
       global.fetch = async () => {
@@ -183,7 +183,7 @@ describe('Company WhatsApp HTTP provider request handling', () => {
       };
       await assert.rejects(
         provider.testSend(record(), { phone: '+919876543210', text: 'test', media: null }),
-        (err) => err.retryable && err.code === 'WA_HTTP_TIMEOUT' && !err.message.includes(secret),
+        (err) => !err.retryable && err.code === 'WA_HTTP_TIMEOUT' && /outcome is unknown/i.test(err.message) && !err.message.includes(secret),
       );
       global.fetch = async () => { throw new Error('connection refused'); };
       await assert.rejects(
